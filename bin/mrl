@@ -1,0 +1,4 @@
+#!/usr/bin/env python
+import metarunlog
+import sys
+metarunlog.main(sys.argv[1:])
