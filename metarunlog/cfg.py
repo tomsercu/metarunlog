@@ -1,3 +1,6 @@
 outdir = 'output'
-singleExpFormat = '{exp:06d}'
-batchExpFormat  = '{exp:06d}-{subexp:03d}'
+singleExpFormat = '{expId:06d}'
+batchExpFormat  = '{expId:06d}-{subexpId:03d}'
+gitFailUntrackedDefault= 'no'
+copyFiles = ['conf.lua', 'models.lua']
+runcommand = 'go.lua -'
