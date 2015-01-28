@@ -14,7 +14,9 @@ import json
 import pdb
 import datetime
 from collections import OrderedDict
-import shutil
+from shutil import copy as shcopy
+from jinja2 import Template
+import itertools
 
 DEBUG = True
 
@@ -27,6 +29,8 @@ class NoBasedirConfig(Exception):
         self.basedir = basedir
         self.orig_e = e
 class InvalidExpIdException(Exception):
+    pass
+class BatchException(Exception):
     pass
 
 def get_commit():
@@ -59,6 +63,38 @@ def initBasedir(basedir, args):
     else:
         return join(basedir, ".mrl.cfg")
 
+class BatchParser:
+    """
+    BatchParser class is initialized with batch-template (list of lines)
+    including the last lines determining the values,
+    and generates self.output as a list of strings (that can be written to file).
+    Raises xxx.
+    """
+    def __init__(self, template):
+        grid = OrderedDict()
+        params = [{}]
+        # iterate over last lines and parse them to collect grid parameters.
+        # correct formatting of mrl instructions:
+        # [something] MRL:grid['key'] = [vallist]
+        # where [something] is comment symbol. The space after it is essential.
+        for line in template[::-1]:
+            if not line.strip(): continue
+            #pdb.set_trace()
+            line = line.split(None, 1)[-1].split(":",1) #discard comment symbol
+            if line[0] != 'MRL': break
+            exec(line[1])
+        # construct output params list
+        keys = grid.keys()
+        vals = list(itertools.product(*[grid[k] for k in keys]))
+        self.params = [dict(zip(keys, v)) for v in vals]
+        self.params = [dict(d1.items() + d2.items()) for d1,d2 in itertools.product(self.params, params)]
+        # render the templates
+        self.output = []
+        jtmpl = Template("".join(template))
+        for i, param in enumerate(self.params):
+            self.output.append((i+1, param, jtmpl.render(**param)))
+            #pdb.set_trace()
+
 class MetaRunLog:
     """
     Metarunlog state from which all actions are coordinated.
@@ -71,7 +107,8 @@ class MetaRunLog:
         self._loadBasedirConfig()
         self.outdir  = join(self.basedir, cfg.outdir)
         if not isdir(self.outdir): raise InvalidOutDirException("Need output directory " + self.outdir)
-        self.expList = sorted([int(x) for x in listdir(self.outdir) if self._checkValidExp(x)])
+        self.expDirList = sorted([x for x in listdir(self.outdir) if self._checkValidExp(x)])
+        self.expList = [int(x) for x in self.expDirList]
         self.lastExpId = None if not self.expList else self.expList[-1]
 
     def _loadBasedirConfig(self):
@@ -110,27 +147,21 @@ class MetaRunLog:
         try:
             if args.copyConfigFrom is None:
                 pass
-            elif args.copyConfigFrom == 'last' and self.lastExpId is not None:
-                self._copyConfigFrom(self._getExpDir(self.lastExpId), expDir)
-            elif args.copyConfigFrom.isdigit():
-                self._copyConfigFrom(self._getExpDir(int(args.copyConfigFrom)), expDir)
-            elif isdir(args.copyConfigFrom): #directory
-                self._copyConfigFrom(args.copyConfigFrom, expDir)
             else:
-                raise InvalidExpIdException("This is not recognized as a copyConfigFrom location: " + args.copyConfigFrom)
+                srcDir = self._getExpDir(self._resolveExpId(args.copyConfigFrom))
+                self._copyConfigFrom(srcDir, expDir)
         except (InvalidExpIdException, IOError) as e:
-            print("Can't copy config files. " + str(e))
+            print("Can't copy config files. ")
+            print(e)
             print("Still succesfully created new experiment directory.")
-        # write .mrl file and save as current expId
-        with open(join(expDir, '.mrl'),'w') as fh:
-            json.dump(expConfig, fh, indent=2)
-            fh.write("\n")
+        self._saveExpDotmrl(expDir, expConfig)
         self.lastExpId = expId
         return expDir
 
     def info(self, args):
         """ load info from experiment id and print it """
-        expConfig = self._getExpConf(args.expId)
+        expId = self._resolveExpId(args.expId)
+        expConfig = self._getExpConf(expId)
         return "\n".join("{} : {}".format(k,v) for k,v in expConfig.iteritems())
 
     def ls(self, args):
@@ -148,9 +179,50 @@ class MetaRunLog:
             print row
         return ""
 
+    def batch(self, args):
+        # resolve id
+        expId = self._resolveExpId(args.expId)
+        expDir = self._getExpDir(expId)
+        # check if already expanded in batch and cancel
+        expConfig = self._getExpConf(expId)
+        oldBatchList = []
+        if 'batchlist' in expConfig:
+            if args.replace:
+                oldBatchList = expConfig['batchlist']
+            else:
+                raise BatchException("Experiment {} is already expanded into a batch of length {}".\
+                        format(expId, len(expConfig['batchlist'])))
+        # make BatchParser object
+        with open(join(expDir, cfg.batchTemplate)) as fh:
+            bp = BatchParser(fh.readlines())
+        # check if BatchParser output is non-empty
+        if not bp.output:
+            err = "BatchParser output is empty, are you sure {} is a batch template?"
+            err.format(join(expDir, cfg.batchTemplate))
+            raise BatchException(err)
+        # generate output directories, write the output config files
+        expConfig['batchlist'] = []
+        for i, params, fileContent in bp.output:
+            expConfig['batchlist'].append(params)
+            subExpDir = join(expDir, cfg.batchExpFormat.format(expId=expId, subexpId=i))
+            if i > len(oldBatchList):
+                os.mkdir(subExpDir)
+            with open(join(subExpDir, cfg.batchTemplate), "w") as fh:
+                fh.write(fileContent)
+                fh.write("\n")
+        # update the current .mrl file
+        self._saveExpDotmrl(expDir, expConfig)
+        return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
+
     def _copyConfigFrom(self, src, dst):
         for cfn in cfg.copyFiles:
-            shutil.copy(join(src,cfn), join(dst, cfn))
+            shcopy(join(src,cfn), join(dst, cfn))
+
+    def _saveExpDotmrl(self, expDir, expConfig):
+        # write .mrl file and save as current expId
+        with open(join(expDir, '.mrl'),'w') as fh:
+            json.dump(expConfig, fh, indent=2)
+            fh.write("\n")
 
     def _checkValidExp(self, name):
         if len(name) != len(cfg.singleExpFormat.format(expId=0)): return False
@@ -160,6 +232,21 @@ class MetaRunLog:
             return False
         # parse each .mrl file in subdir? Probably overkill
         return True
+
+    def _resolveExpId(self, expId):
+        """ resolves expId from int, 'last' or path, and returns directory,
+        or raise error if not found """
+        if expId == 'last' and self.lastExpId is not None:
+            return self.lastExpId
+        elif expId.isdigit():
+            if int(expId) in self.expList:
+                return int(expId)
+            else:
+                raise InvalidExpIdException("Invalid experiment id (not in list): {}".format(int(expId)))
+        elif isdir(expId) and relpath(expId, self.outdir) in self.expDirList:
+            return self.expList[self.expDirList.index(relpath(expId, self.outdir))]
+        else:
+            raise InvalidExpIdException("This is not recognized as a experiment location: " + expId)
 
     def _getExpDir(self, expId, new=False):
         if not new and not expId in self.expList:
@@ -188,7 +275,7 @@ def main():
     parser_new.set_defaults(mode='new')
     # info
     parser_info = subparsers.add_parser('info', help='show experiment info.')
-    parser_info.add_argument('expId', type=int)
+    parser_info.add_argument('expId', default='last', help='exp number, directory, or last', nargs='?')
     parser_info.set_defaults(mode='info')
     # ls
     parser_ls = subparsers.add_parser('ls', help = 'list output dir, newest first.')
@@ -197,8 +284,11 @@ def main():
     parser_ls.add_argument('-gdesc', action='store_const', const=True, help='Show git description')
     parser_ls.add_argument('-desc', action='store_const', const=True, help='Show experiment description')
     parser_ls.set_defaults(mode='ls')
-    # TODO batch
-
+    # batch
+    parser_batch = subparsers.add_parser('batch', help = 'expand batch config template into config files')
+    parser_batch.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_batch.add_argument('-replace', help='Overwrite config files if already expanded', action='store_const', const=True)
+    parser_batch.set_defaults(mode='batch')
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
@@ -213,19 +303,18 @@ def main():
     except InvalidOutDirException as e:
         print(e)
         return
+    except NoBasedirConfig as e:
+        print "No valid basedir config file in {}".format(e.basedir)
+        print "Error on loading: {}".format(e.orig_e)
+        print "Run mrl init in this directory first to make it a base directory."
     else:
         try:
             ret = getattr(mrlState, args.mode)(args)
             if ret: print(ret)
-        except NoCleanStateException as e:
-            print(e)
-        except NoBasedirConfig as e:
-            print "No valid basedir config file in {}".format(e.basedir)
-            print "Error on loading: {}".format(e.orig_e)
-            print "Run mrl init in this directory first to make it a base directory."
-        except InvalidExpIdException as e:
+        except (NoCleanStateException,\
+                InvalidExpIdException,\
+                BatchException) as e:
             print(e)
         except Exception as e:
             print "Unchecked exception"
             raise
-    return
