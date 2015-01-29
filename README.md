@@ -52,5 +52,6 @@ This expands the template under id (default = last id) into subdirs, each contai
 Todo
 -
 + Current experiment should not be a global (basedir) property, rather a per-shell or per-client one. Or, maybe it doesn't matter if we're always working with screen/manual runs OR trainSlave and trainMaster.
++ Name new folders w short description: "000001-blab_bla"
 
 

@@ -79,7 +79,6 @@ class BatchParser:
         # where [something] is comment symbol. The space after it is essential.
         for line in template[::-1]:
             if not line.strip(): continue
-            #pdb.set_trace()
             line = line.split(None, 1)[-1].split(":",1) #discard comment symbol
             if line[0] != 'MRL': break
             exec(line[1])
@@ -93,7 +92,6 @@ class BatchParser:
         jtmpl = Template("".join(template))
         for i, param in enumerate(self.params):
             self.output.append((i+1, param, jtmpl.render(**param)))
-            #pdb.set_trace()
 
 class MetaRunLog:
     """
@@ -116,7 +114,7 @@ class MetaRunLog:
             with open(join(self.basedir, '.mrl.cfg')) as fh:
                 bconf = json.load(fh)
                 for k,v in bconf.iteritems():
-                    cfg.k = v
+                    setattr(cfg,k,v)
             return True
         except Exception as e:
             raise NoBasedirConfig(self.basedir, str(e))
