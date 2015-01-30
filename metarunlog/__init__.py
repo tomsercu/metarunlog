@@ -7,7 +7,7 @@ import metarunlog.cfg as cfg
 import os
 import sys
 from os import listdir
-from os.path import isdir, isfile, join, relpath
+from os.path import isdir, isfile, join, relpath, expanduser
 import argparse
 import subprocess
 import json
@@ -120,7 +120,7 @@ class MetaRunLog:
             raise NoBasedirConfig(self.basedir, str(e))
 
     def new(self,args):
-        expId = 1 if self.lastExpId is None else self.lastExpId+1
+        expId = 1 if not self.lastExpId else self.lastExpId+1
         expConfig = OrderedDict()
         expConfig ['expId'] = expId
         expConfig['basedir'] = self.basedir
@@ -138,7 +138,7 @@ class MetaRunLog:
         expConfig['longDescription'] = "" # edit into .mrl file directly
         # make dir and symlink  and
         expDir = self._getExpDir(expId, True)
-        os.remove(join(self.outdir,'last'))
+        if self.lastExpId: os.remove(join(self.outdir,'last'))
         os.symlink(relpath(expDir,self.outdir), join(self.outdir, 'last'))
         os.mkdir(expDir)
         # After this point: expDir is made, no more exception throwing! copy config files
@@ -153,6 +153,7 @@ class MetaRunLog:
             print(e)
             print("Still succesfully created new experiment directory.")
         self._saveExpDotmrl(expDir, expConfig)
+        self._renderLaunchScript(expDir, expConfig)
         self.lastExpId = expId
         return expDir
 
@@ -202,15 +203,42 @@ class MetaRunLog:
         expConfig['batchlist'] = []
         for i, params, fileContent in bp.output:
             expConfig['batchlist'].append(params)
-            subExpDir = join(expDir, cfg.batchExpFormat.format(expId=expId, subexpId=i))
+            subExpDir = join(expDir, cfg.batchExpFormat.format(expId=expId, subExpId=i))
             if i > len(oldBatchList):
                 os.mkdir(subExpDir)
             with open(join(subExpDir, cfg.batchTemplate), "w") as fh:
                 fh.write(fileContent)
                 fh.write("\n")
+            self._renderLaunchScript(subExpDir, expConfig)
         # update the current .mrl file
         self._saveExpDotmrl(expDir, expConfig)
+        self._writeMetaRunFile(expId, len(bp.output))
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
+
+    def _writeMetaRunFile(self, expId, N):
+        expDir = self._getExpDir(expId)
+        command = 'cd {} && qsub {} && cd .. && sleep 1 && echo "qsubbed {}"'
+        subdirs = [cfg.batchExpFormat.format(expId=expId, subExpId=i) for i in range(1,N+1)]
+        cmds = [command.format(subdir, cfg.launchScript, subdir) for subdir in subdirs]
+        open(join(expDir, 'metarun.sh'),"w").write("\n".join(cmds))
+
+    def _renderLaunchScript(self, expDir, expConfig):
+        """ Launch script is jinja template in basedir config.
+        It has access to expDir, the global configuration,
+        and all experiment specific variables
+        in expConfig."""
+        jtemp = Template(cfg.files["launchScript"])
+        tparams = {k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}
+        tparams.update(expConfig)
+        tparams['expDir'] = relpath(expDir, self.basedir)
+        tparams['basedir']= self._relpathUser(self.basedir)
+        with open(join(expDir, cfg.launchScript), "w") as fh:
+            fh.write(jtemp.render(tparams))
+            fh.write("\n")
+        os.chmod(join(expDir, cfg.launchScript), 0770)
+
+    def _relpathUser(self, path):
+        return '~/' + relpath(path, expanduser('~'))
 
     def _copyConfigFrom(self, src, dst):
         for cfn in cfg.copyFiles:
