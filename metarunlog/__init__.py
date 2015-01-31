@@ -157,8 +157,7 @@ class MetaRunLog:
             print(e)
             print("Still succesfully created new experiment directory.")
         self._saveExpDotmrl(expDir, expConfig)
-        launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
-        self._renderLaunchScript(expDir, expConfig, launchScriptFile)
+        self._renderLaunchScript(expDir, expConfig, self._fmtLaunchScriptFile(expId))
         self.lastExpId = expId
         return expDir
 
@@ -171,7 +170,7 @@ class MetaRunLog:
     def ls(self, args):
         for expId in self.expList[::-1]:
             expConfig = self._getExpConf(expId)
-            row = cfg.singleExpFormat.format(expId=expId)
+            row = self._fmtSingleExp(expId)
             if args.tm:
                 row += "\t" + expConfig['timestamp']
             if args.ghash:
@@ -208,26 +207,38 @@ class MetaRunLog:
         expConfig['batchlist'] = []
         for i, params, fileContent in bp.output:
             expConfig['batchlist'].append(params)
-            subExpDir = join(expDir, cfg.batchExpFormat.format(expId=expId, subExpId=i))
+            subExpDir = join(expDir, self._fmtBatchExp(expId=expId, subExpId=i))
             if i > len(oldBatchList):
                 os.mkdir(subExpDir)
             with open(join(subExpDir, cfg.batchTemplFile), "w") as fh:
                 fh.write(fileContent)
                 fh.write("\n")
-            launchScriptFile = cfg.launchScriptFile.format(cfg.batchExpFormat.format(expId=expId, subExpId=i))
-            self._renderLaunchScript(subExpDir, expConfig, launchScriptFile)
+            self._renderLaunchScript(subExpDir, expConfig, self._fmtLaunchScriptFile(expId, i))
         # update the current .mrl file
         self._saveExpDotmrl(expDir, expConfig)
         self._writeqsubFile(expId, len(bp.output))
-        launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
-        os.remove(join(expDir, launchScriptFile)) # this conf is a template so doesnt make sense to run it
+        os.remove(join(expDir, self._fmtLaunchScriptFile(expId))) # this conf is a template so doesnt make sense to run it
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
+
+    def _fmtSingleExp(self, expId):
+        # TODO use these 3 helper functions everywhere and change fmtSingleExp to
+        # fetch date from a list initialized in init, then fill in that date here.
+        return cfg.singleExpFormat.format(expId=expId)
+
+    def _fmtBatchExp(self, expId, subExpId):
+        return cfg.batchExpFormat.format(expId=expId, subExpId=subExpId)
+
+    def _fmtLaunchScriptFile(self,expId, subExpId=None):
+        if subExpId:
+            return cfg.launchScriptFile.format(self._fmtBatchExp(expId, subExpId))
+        else:
+            return cfg.launchScriptFile.format(self._fmtSingleExp(expId))
 
     def hpcSubmit(self, args):
         # TODO differentiate between single and batch job
         expId = self._resolveExpId(args.expId)
         expDir = self._getExpDir(expId)
-        remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, cfg.singleExpFormat.format(expId=expId))
+        remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
         expConfig = self._getExpConf(expId)
         if 'hpcSubmit' in expConfig and not args.replace:
             raise HpcException("hpcSubmit key already in {} .mrl file. Aborting to avoid data loss.".format(expId))
@@ -260,8 +271,7 @@ class MetaRunLog:
                 print "Couldn't save qsubids correctly: ", e
                 qsubids = hpcRet
         else:
-            launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
-            hpcRet = hpc('cd {}; qsub {}'.format(remoteExpDir, launchScriptFile))
+            hpcRet = hpc('cd {}; qsub {}'.format(remoteExpDir, self._fmtLaunchScriptFile(expId)))
             print hpcRet
             qsubids = int(hpcRet)
         expConfig['hpcSubmit'] = qsubids
@@ -271,8 +281,8 @@ class MetaRunLog:
         # TODO make git clone  and checkout part of this to avoid 100 clones to the subdirs.
         expDir = self._getExpDir(expId)
         command = 'cd {} && qsub {} && cd .. && sleep 1 && echo "qsubbed {}"'
-        subdirs = [cfg.batchExpFormat.format(expId=expId, subExpId=i) for i in range(1,N+1)]
-        lsfiles = [cfg.launchScriptFile.format(batchexp) for batchexp in subdirs]
+        subdirs = [self._fmtBatchExp(expId=expId, subExpId=i) for i in range(1,N+1)]
+        lsfiles = [self._fmtLaunchScriptFile(expId, i) for i in range(1,N+1)]
         cmds = [command.format(subdir, lsfile, subdir) for lsfile,subdir in zip(lsfiles,subdirs)]
         cmds.append("")
         open(join(expDir, cfg.qsubFile),"w").write("\n".join(cmds))
@@ -308,7 +318,8 @@ class MetaRunLog:
             fh.write("\n")
 
     def _checkValidExp(self, name):
-        if len(name) != len(cfg.singleExpFormat.format(expId=0)): return False
+        # TODO change
+        if len(name) != len(self._fmtSingleExp(0)): return False
         try:
             int(name)
         except:
@@ -334,7 +345,7 @@ class MetaRunLog:
     def _getExpDir(self, expId, new=False):
         if not new and not expId in self.expList:
             raise InvalidExpIdException("Experiment {} not found.".format(expId))
-        return join(self.outdir, cfg.singleExpFormat.format(expId=expId))
+        return join(self.outdir, self._fmtSingleExp(expId))
     def _getExpConf(self, expId):
         with open(join(self._getExpDir(expId), '.mrl')) as fh:
             expConfig = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(fh.read())
