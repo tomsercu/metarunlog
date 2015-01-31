@@ -17,6 +17,7 @@ from collections import OrderedDict
 from shutil import copy as shcopy
 from jinja2 import Template
 import itertools
+import getpass
 
 DEBUG = True
 
@@ -31,6 +32,8 @@ class NoBasedirConfig(Exception):
 class InvalidExpIdException(Exception):
     pass
 class BatchException(Exception):
+    pass
+class HpcException(Exception):
     pass
 
 def get_commit():
@@ -134,6 +137,7 @@ class MetaRunLog:
         expConfig['gitHash'], expConfig['gitDescription'] = get_commit()
         if not gitclean and uncommited: expConfig['gitHash'] += '-sloppy'
         expConfig['timestamp'] = datetime.datetime.now().isoformat().split('.')[0]
+        expConfig['user'] = getpass.getuser()
         expConfig['shortDescription'] = args.description if args.description else ""
         expConfig['longDescription'] = "" # edit into .mrl file directly
         # make dir and symlink  and
@@ -143,7 +147,7 @@ class MetaRunLog:
         os.mkdir(expDir)
         # After this point: expDir is made, no more exception throwing! copy config files
         try:
-            if args.copyConfigFrom is None:
+            if args.copyConfigFrom == 'no':
                 pass
             else:
                 srcDir = self._getExpDir(self._resolveExpId(args.copyConfigFrom))
@@ -153,7 +157,8 @@ class MetaRunLog:
             print(e)
             print("Still succesfully created new experiment directory.")
         self._saveExpDotmrl(expDir, expConfig)
-        self._renderLaunchScript(expDir, expConfig)
+        launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
+        self._renderLaunchScript(expDir, expConfig, launchScriptFile)
         self.lastExpId = expId
         return expDir
 
@@ -182,8 +187,8 @@ class MetaRunLog:
         # resolve id
         expId = self._resolveExpId(args.expId)
         expDir = self._getExpDir(expId)
-        # check if already expanded in batch and cancel
         expConfig = self._getExpConf(expId)
+        # check if already expanded in batch and cancel
         oldBatchList = []
         if 'batchlist' in expConfig:
             if args.replace:
@@ -192,12 +197,12 @@ class MetaRunLog:
                 raise BatchException("Experiment {} is already expanded into a batch of length {}".\
                         format(expId, len(expConfig['batchlist'])))
         # make BatchParser object
-        with open(join(expDir, cfg.batchTemplate)) as fh:
+        with open(join(expDir, cfg.batchTemplFile)) as fh:
             bp = BatchParser(fh.readlines())
         # check if BatchParser output is non-empty
         if not bp.output:
             err = "BatchParser output is empty, are you sure {} is a batch template?"
-            err.format(join(expDir, cfg.batchTemplate))
+            err.format(join(expDir, cfg.batchTemplFile))
             raise BatchException(err)
         # generate output directories, write the output config files
         expConfig['batchlist'] = []
@@ -206,36 +211,88 @@ class MetaRunLog:
             subExpDir = join(expDir, cfg.batchExpFormat.format(expId=expId, subExpId=i))
             if i > len(oldBatchList):
                 os.mkdir(subExpDir)
-            with open(join(subExpDir, cfg.batchTemplate), "w") as fh:
+            with open(join(subExpDir, cfg.batchTemplFile), "w") as fh:
                 fh.write(fileContent)
                 fh.write("\n")
-            self._renderLaunchScript(subExpDir, expConfig)
+            launchScriptFile = cfg.launchScriptFile.format(cfg.batchExpFormat.format(expId=expId, subExpId=i))
+            self._renderLaunchScript(subExpDir, expConfig, launchScriptFile)
         # update the current .mrl file
         self._saveExpDotmrl(expDir, expConfig)
-        self._writeMetaRunFile(expId, len(bp.output))
+        self._writeqsubFile(expId, len(bp.output))
+        launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
+        os.remove(join(expDir, launchScriptFile)) # this conf is a template so doesnt make sense to run it
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
 
-    def _writeMetaRunFile(self, expId, N):
+    def hpcSubmit(self, args):
+        # TODO differentiate between single and batch job
+        expId = self._resolveExpId(args.expId)
+        expDir = self._getExpDir(expId)
+        remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, cfg.singleExpFormat.format(expId=expId))
+        expConfig = self._getExpConf(expId)
+        if 'hpcSubmit' in expConfig and not args.replace:
+            raise HpcException("hpcSubmit key already in {} .mrl file. Aborting to avoid data loss.".format(expId))
+        # start with remote stuff!
+        pwd = getpass.getpass("Password for hpc: ")
+        # scp to copy to remote
+        def hpc(cmd,ssh=True):
+            if ssh:
+                sshcmd = "ssh {}".format(cfg.hpcServer)
+                cmd = '"{}"'.format(cmd.replace('"', '\\"'))
+            else:
+                sshcmd = ""
+            mcmd = "sshpass -p '{}' {} {}".format(pwd, sshcmd, cmd)
+            print mcmd.replace(pwd,'***')
+            return subprocess.check_output(mcmd, shell=True)
+        try:
+            hpc("mkdir {}".format(remoteExpDir))
+        except Exception as e:
+            if not args.replace:
+                raise HpcException("hpc submission - error in mkdir returned nonzero exit. Dir already exists?")
+        hpc("scp -r {} {}:{}".format(join(expDir,'*'), cfg.hpcServer, remoteExpDir), ssh=False)
+        # subprocess ssh then qsub then print qstat
+        if 'batchlist' in expConfig:
+            hpcRet = hpc('cd {}; ./{}'.format(remoteExpDir, cfg.qsubFile))
+            print hpcRet.strip().split("\n")
+            # every even-indexed line is an id
+            try:
+                qsubids = [int(x) for i,x in enumerate(hpcRet.strip().split("\n")) if i%2==0]
+            except Exception as e: #failure on qsub? save output
+                print "Couldn't save qsubids correctly: ", e
+                qsubids = hpcRet
+        else:
+            launchScriptFile = cfg.launchScriptFile.format(cfg.singleExpFormat.format(expId=expId))
+            hpcRet = hpc('cd {}; qsub {}'.format(remoteExpDir, launchScriptFile))
+            print hpcRet
+            qsubids = int(hpcRet)
+        expConfig['hpcSubmit'] = qsubids
+        self._saveExpDotmrl(expDir, expConfig)
+
+    def _writeqsubFile(self, expId, N):
+        # TODO make git clone  and checkout part of this to avoid 100 clones to the subdirs.
         expDir = self._getExpDir(expId)
         command = 'cd {} && qsub {} && cd .. && sleep 1 && echo "qsubbed {}"'
         subdirs = [cfg.batchExpFormat.format(expId=expId, subExpId=i) for i in range(1,N+1)]
-        cmds = [command.format(subdir, cfg.launchScript, subdir) for subdir in subdirs]
-        open(join(expDir, 'metarun.sh'),"w").write("\n".join(cmds))
+        lsfiles = [cfg.launchScriptFile.format(batchexp) for batchexp in subdirs]
+        cmds = [command.format(subdir, lsfile, subdir) for lsfile,subdir in zip(lsfiles,subdirs)]
+        cmds.append("")
+        open(join(expDir, cfg.qsubFile),"w").write("\n".join(cmds))
+        os.chmod(join(expDir, cfg.qsubFile), 0770)
 
-    def _renderLaunchScript(self, expDir, expConfig):
+    def _renderLaunchScript(self, expDir, expConfig, fn):
         """ Launch script is jinja template in basedir config.
         It has access to expDir, the global configuration,
         and all experiment specific variables
         in expConfig."""
-        jtemp = Template(cfg.files["launchScript"])
+        # TODO make git clone and checkout part optional here
+        jtemp = Template(cfg.launchScriptTempl)
         tparams = {k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}
         tparams.update(expConfig)
         tparams['expDir'] = relpath(expDir, self.basedir)
         tparams['basedir']= self._relpathUser(self.basedir)
-        with open(join(expDir, cfg.launchScript), "w") as fh:
+        with open(join(expDir, fn), "w") as fh:
             fh.write(jtemp.render(tparams))
             fh.write("\n")
-        os.chmod(join(expDir, cfg.launchScript), 0770)
+        os.chmod(join(expDir, fn), 0770)
 
     def _relpathUser(self, path):
         return '~/' + relpath(path, expanduser('~'))
@@ -296,7 +353,7 @@ def main():
     parser_new = subparsers.add_parser('new', help='new experiment directory.')
     parser_new.add_argument('-nc', '--notclean', action='store_const', const=True)
     parser_new.add_argument('-gfut', '--gitFailUntracked', choices=['no', 'yes'], default = cfg.gitFailUntrackedDefault)
-    parser_new.add_argument('-cp', '--copyConfigFrom', default = None)
+    parser_new.add_argument('-cp', '--copyConfigFrom', default = 'last', nargs='?')
     parser_new.add_argument('description', help='Description', nargs='?')
     parser_new.set_defaults(mode='new')
     # info
@@ -315,6 +372,11 @@ def main():
     parser_batch.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_batch.add_argument('-replace', help='Overwrite config files if already expanded', action='store_const', const=True)
     parser_batch.set_defaults(mode='batch')
+    # hpc Submit
+    parser_hpc = subparsers.add_parser('hpcSubmit', help = 'rsync output folder to hpc and run it by submitting')
+    parser_hpc.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_hpc.add_argument('-replace', help='Ignore existing hpc data.', action='store_const', const=True)
+    parser_hpc.set_defaults(mode='hpcSubmit')
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
