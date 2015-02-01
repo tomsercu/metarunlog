@@ -11,6 +11,8 @@ rstFile         = '.mrl.rst'
 giturl          = 'cims:~/lo'
 hpcServer       = 'mercer'  # needs hpc tunnel to be set up! Assumes entry in .ssh/config specifying port & user
 hpcBasedir      = '~/lo'
+#hpcOutputLogs   = 'logs/*'
+hpcOutputData   = ['best_model.mat', 'last_model.mat'] # data, standard excluded from fetch
 launchScriptTempl=\
 """#!/bin/bash
 #PBS -l nodes=1:ppn=1:gpus=1:titan

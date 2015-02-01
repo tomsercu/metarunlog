@@ -111,6 +111,7 @@ class MetaRunLog:
         self.expDirList = sorted([x for x in listdir(self.outdir) if self._checkValidExp(x)])
         self.expList = [int(x) for x in self.expDirList]
         self.lastExpId = None if not self.expList else self.expList[-1]
+        self.hpcPass = None
 
     def _loadBasedirConfig(self):
         try:
@@ -220,49 +221,23 @@ class MetaRunLog:
         os.remove(join(expDir, self._fmtLaunchScriptFile(expId))) # this conf is a template so doesnt make sense to run it
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
 
-    def _fmtSingleExp(self, expId):
-        # TODO use these 3 helper functions everywhere and change fmtSingleExp to
-        # fetch date from a list initialized in init, then fill in that date here.
-        return cfg.singleExpFormat.format(expId=expId)
-
-    def _fmtBatchExp(self, expId, subExpId):
-        return cfg.batchExpFormat.format(expId=expId, subExpId=subExpId)
-
-    def _fmtLaunchScriptFile(self,expId, subExpId=None):
-        if subExpId:
-            return cfg.launchScriptFile.format(self._fmtBatchExp(expId, subExpId))
-        else:
-            return cfg.launchScriptFile.format(self._fmtSingleExp(expId))
-
     def hpcSubmit(self, args):
-        # TODO differentiate between single and batch job
         expId = self._resolveExpId(args.expId)
         expDir = self._getExpDir(expId)
         remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
         expConfig = self._getExpConf(expId)
         if 'hpcSubmit' in expConfig and not args.replace:
             raise HpcException("hpcSubmit key already in {} .mrl file. Aborting to avoid data loss.".format(expId))
-        # start with remote stuff!
-        pwd = getpass.getpass("Password for hpc: ")
         # scp to copy to remote
-        def hpc(cmd,ssh=True):
-            if ssh:
-                sshcmd = "ssh {}".format(cfg.hpcServer)
-                cmd = '"{}"'.format(cmd.replace('"', '\\"'))
-            else:
-                sshcmd = ""
-            mcmd = "sshpass -p '{}' {} {}".format(pwd, sshcmd, cmd)
-            print mcmd.replace(pwd,'***')
-            return subprocess.check_output(mcmd, shell=True)
         try:
-            hpc("mkdir {}".format(remoteExpDir))
+            self._hpc("mkdir {}".format(remoteExpDir))
         except Exception as e:
             if not args.replace:
                 raise HpcException("hpc submission - error in mkdir returned nonzero exit. Dir already exists?")
-        hpc("scp -r {} {}:{}".format(join(expDir,'*'), cfg.hpcServer, remoteExpDir), ssh=False)
+        self._hpc("scp -r {} {}:{}".format(join(expDir,'*'), cfg.hpcServer, remoteExpDir), ssh=False)
         # subprocess ssh then qsub then print qstat
         if 'batchlist' in expConfig:
-            hpcRet = hpc('cd {}; ./{}'.format(remoteExpDir, cfg.qsubFile))
+            hpcRet = self._hpc('cd {}; ./{}'.format(remoteExpDir, cfg.qsubFile))
             print hpcRet.strip().split("\n")
             # every even-indexed line is an id
             try:
@@ -271,11 +246,50 @@ class MetaRunLog:
                 print "Couldn't save qsubids correctly: ", e
                 qsubids = hpcRet
         else:
-            hpcRet = hpc('cd {}; qsub {}'.format(remoteExpDir, self._fmtLaunchScriptFile(expId)))
+            hpcRet = self._hpc('cd {}; qsub {}'.format(remoteExpDir, self._fmtLaunchScriptFile(expId)))
             print hpcRet
             qsubids = int(hpcRet)
         expConfig['hpcSubmit'] = qsubids
         self._saveExpDotmrl(expDir, expConfig)
+
+    def hpcFetch(self, args):
+        expId = self._resolveExpId(args.expId)
+        expDir = self._getExpDir(expId)
+        remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
+        expConfig = self._getExpConf(expId)
+        if 'hpcSubmit' not in expConfig:
+            raise HpcException("hpcSubmit key not in in {} .mrl file. Was this launched as hpc job?".format(expId))
+        # Locations to fetch from
+        if 'batchlist' in expConfig:
+            if args.subExpId == 'all':
+                fetchloc = [self._fmtBatchExp(expId, i) for i in range(1,len(expConfig['batchlist'])+1)]
+            else:
+                if int(args.subExpId) <= len(expConfig['batchlist']):
+                    fetchloc = [self._fmtBatchExp(expId, int(args.subExpId)), ]
+                else:
+                    raise HpcException("subExpId {} out of range".format(args.subExpId))
+        else:
+            fetchloc = ['']
+        # Exclude datafiles ifneeded
+        if not args.data:
+            excludes = " ".join(['--exclude={}'.format(datafile) for datafile in cfg.hpcOutputData])
+        else:
+            excludes = ""
+        for loc in fetchloc:
+            cmd = "rsync -aP {} {}:{}/ {}/".format(excludes, cfg.hpcServer, join(remoteExpDir,loc), join(expDir,loc))
+            self._hpc(cmd, ssh=False)
+
+    def _hpc(self, cmd, ssh=True):
+        if not self.hpcPass:
+            self.hpcPass= getpass.getpass("Password for hpc: ")
+        if ssh:
+            sshcmd = "ssh {}".format(cfg.hpcServer)
+            cmd = '"{}"'.format(cmd.replace('"', '\\"'))
+        else:
+            sshcmd = ""
+        mcmd = "sshpass -p '{}' {} {}".format(self.hpcPass, sshcmd, cmd)
+        if DEBUG: print "sshpass -p '{}' {} {}".format('***', sshcmd, cmd)
+        return subprocess.check_output(mcmd, shell=True)
 
     def _writeqsubFile(self, expId, N):
         # TODO make git clone  and checkout part of this to avoid 100 clones to the subdirs.
@@ -303,6 +317,19 @@ class MetaRunLog:
             fh.write(jtemp.render(tparams))
             fh.write("\n")
         os.chmod(join(expDir, fn), 0770)
+
+    def _fmtSingleExp(self, expId):
+        # TODO change fmtSingleExp to fetch date from a list initialized in init, then fill in that date here.
+        return cfg.singleExpFormat.format(expId=expId)
+
+    def _fmtBatchExp(self, expId, subExpId):
+        return cfg.batchExpFormat.format(expId=expId, subExpId=subExpId)
+
+    def _fmtLaunchScriptFile(self,expId, subExpId=None):
+        if subExpId:
+            return cfg.launchScriptFile.format(self._fmtBatchExp(expId, subExpId))
+        else:
+            return cfg.launchScriptFile.format(self._fmtSingleExp(expId))
 
     def _relpathUser(self, path):
         return '~/' + relpath(path, expanduser('~'))
@@ -384,10 +411,16 @@ def main():
     parser_batch.add_argument('-replace', help='Overwrite config files if already expanded', action='store_const', const=True)
     parser_batch.set_defaults(mode='batch')
     # hpc Submit
-    parser_hpc = subparsers.add_parser('hpcSubmit', help = 'rsync output folder to hpc and run it by submitting')
-    parser_hpc.add_argument('expId', help='experiment ID', default='last', nargs='?')
-    parser_hpc.add_argument('-replace', help='Ignore existing hpc data.', action='store_const', const=True)
-    parser_hpc.set_defaults(mode='hpcSubmit')
+    parser_hpcSubmit = subparsers.add_parser('hpcSubmit', help = 'scp output folder to hpc and run it by qsubbing')
+    parser_hpcSubmit.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_hpcSubmit.add_argument('-replace', help='Ignore existing hpc data.', action='store_const', const=True)
+    parser_hpcSubmit.set_defaults(mode='hpcSubmit')
+    # hpc Submit
+    parser_hpcFetch = subparsers.add_parser('hpcFetch', help = 'Fetch output logs and optionally data from hpc')
+    parser_hpcFetch.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_hpcFetch.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+    parser_hpcFetch.add_argument('-data', help='Fetch hpc output data.', action='store_const', const=True)
+    parser_hpcFetch.set_defaults(mode='hpcFetch')
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
