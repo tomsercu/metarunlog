@@ -286,12 +286,14 @@ class MetaRunLog:
             print "Custom command {} for location {}".format(args.command, loc)
             for cmdEnv in cmds:
                 if 'cwd' in cmdEnv:
+                    originalCwd = os.getcwd()
                     os.chdir(os.path.expanduser(cmdEnv['cwd']))
                 cmd = cmdEnv['command'].format(loc=loc)
                 print cmd
                 output = subprocess.check_output(cmd, shell=True)
-                print output[-100:]
-                print
+                print "Output tail: ", output[-100:].replace("\n", "\\n")
+                if 'cwd' in cmdEnv:
+                    os.chdir(originalCwd)
 
     def _hpc(self, cmd, ssh=True):
         if not self.hpcPass:
