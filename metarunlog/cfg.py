@@ -31,3 +31,15 @@ rstTempl = \
 """desc:{{expId}} - {{timestamp}} - {{shortdescription}}
 files:{{files}}
 """
+custom = {
+'score' : [
+    {
+        'cwd': '~/attila/301/VLLP/buildDNN.SI.1/torchTest',
+        'command': 'attila test.py -L {loc} -M 10',
+    },
+    {
+        'cwd': '~/attila/301/VLLP/scoring_',
+        'command': 'attila score.py --langID=301.tune ~/attila/301/VLLP/buildDNN.SI.1/torchTest/ctm/{loc}/0.053/'
+    }
+    ]
+}

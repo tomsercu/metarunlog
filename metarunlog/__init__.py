@@ -35,6 +35,8 @@ class BatchException(Exception):
     pass
 class HpcException(Exception):
     pass
+class NoSuchCustomCommandException(Exception):
+    pass
 
 def get_commit():
     cline = subprocess.check_output("git log -n1 --oneline", shell=True)
@@ -50,7 +52,7 @@ def initBasedir(basedir, args):
     except NoBasedirConfig:
         pass # should be raised
     else:
-        return "{} already has valid .mrl.cfg file, don't try to re-init.".format(basedir)
+        return "{} already has valid .mrl.cfg file, remove it first to re-init.".format(basedir)
     # initialize .mrl.cfg file as a json-dict copy of cfg.py template
     with open(join(basedir, '.mrl.cfg'),"w") as fh:
         # copy the cfg attributes into ordered dict
@@ -222,6 +224,7 @@ class MetaRunLog:
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
 
     def hpcSubmit(self, args):
+        # TODO skip the qsub file and qsub all from mrl. Use _getRunLocations function
         expId = self._resolveExpId(args.expId)
         expDir = self._getExpDir(expId)
         remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
@@ -260,24 +263,35 @@ class MetaRunLog:
         if 'hpcSubmit' not in expConfig:
             raise HpcException("hpcSubmit key not in in {} .mrl file. Was this launched as hpc job?".format(expId))
         # Locations to fetch from
-        if 'batchlist' in expConfig:
-            if args.subExpId == 'all':
-                fetchloc = [self._fmtBatchExp(expId, i) for i in range(1,len(expConfig['batchlist'])+1)]
-            else:
-                if int(args.subExpId) <= len(expConfig['batchlist']):
-                    fetchloc = [self._fmtBatchExp(expId, int(args.subExpId)), ]
-                else:
-                    raise HpcException("subExpId {} out of range".format(args.subExpId))
-        else:
-            fetchloc = ['']
+        runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=expDir)
         # Exclude datafiles ifneeded
         if not args.data:
             excludes = " ".join(['--exclude={}'.format(datafile) for datafile in cfg.hpcOutputData])
         else:
             excludes = ""
-        for loc in fetchloc:
+        for loc in runLocs:
             cmd = "rsync -aP {} {}:{}/ {}/".format(excludes, cfg.hpcServer, join(remoteExpDir,loc), join(expDir,loc))
             self._hpc(cmd, ssh=False)
+
+    def custom(self, args):
+        if args.command not in cfg.custom:
+            raise NoSuchCustomCommandException("Command {} not defined in .mrl.cfg (choose from {} or define it)",
+                    args.command, cfg.custom.keys())
+        cmds = cfg.custom[args.command]
+        expId = self._resolveExpId(args.expId)
+        expConfig = self._getExpConf(expId)
+        runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
+        # experiments
+        for loc in runLocs:
+            print "Custom command {} for location {}".format(args.command, loc)
+            for cmdEnv in cmds:
+                if 'cwd' in cmdEnv:
+                    os.chdir(os.path.expanduser(cmdEnv['cwd']))
+                cmd = cmdEnv['command'].format(loc=loc)
+                print cmd
+                output = subprocess.check_output(cmd, shell=True)
+                print output[-100:]
+                print
 
     def _hpc(self, cmd, ssh=True):
         if not self.hpcPass:
@@ -288,8 +302,35 @@ class MetaRunLog:
         else:
             sshcmd = ""
         mcmd = "sshpass -p '{}' {} {}".format(self.hpcPass, sshcmd, cmd)
-        if DEBUG: print "sshpass -p '{}' {} {}".format('***', sshcmd, cmd)
-        return subprocess.check_output(mcmd, shell=True)
+        cleancmd = "sshpass -p '{}' {} {}".format('***', sshcmd, cmd)
+        if DEBUG: print cleancmd
+        try:
+            out = subprocess.check_output(mcmd, shell=True)
+        except subprocess.CalledProcessError as e:
+            # remove pwd from cmd
+            err = str(e).replace(mcmd, cleancmd)
+            raise HpcException(err)
+        return out
+
+    def _getRunLocations(self, expId, subExpId, expConfig, relativeTo=''):
+        if 'batchlist' in expConfig:
+            if subExpId == 'all':
+                locs = [self._fmtBatchExp(expId, i) for i in range(1,len(expConfig['batchlist'])+1)]
+            elif subExpId.isdigit():
+                if int(subExpId) > len(expConfig['batchlist']):
+                    raise SubExpIdException("subExpId {} out of range (batch size {} in expConfig)".format(subExpId,len(expConfig['batchlist'])))
+                locs = [self._fmtBatchExp(expId, int(subExpId)), ]
+            else:
+                # TODO list of subexpids can be handy
+                raise SubExpIdException("Don't understand subExpId {}.".format(subExpId))
+        else:
+            locs = ['']
+        expDir = self._getExpDir(expId)
+        if relativeTo != expDir:
+            locs = [join(expDir, loc) for loc in locs]
+            if relativeTo:
+                locs = [relpath(loc, relativeTo) for loc in locs]
+        return locs
 
     def _writeqsubFile(self, expId, N):
         # TODO make git clone  and checkout part of this to avoid 100 clones to the subdirs.
@@ -421,6 +462,12 @@ def main():
     parser_hpcFetch.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
     parser_hpcFetch.add_argument('-data', help='Fetch hpc output data.', action='store_const', const=True)
     parser_hpcFetch.set_defaults(mode='hpcFetch')
+    # custom
+    parser_custom = subparsers.add_parser('custom', help = 'Run custom shell commands specified in your .mrl.cfg file')
+    parser_custom.add_argument('command', help='command')
+    parser_custom.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_custom.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+    parser_custom.set_defaults(mode='custom')
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
@@ -445,7 +492,9 @@ def main():
             if ret: print(ret)
         except (NoCleanStateException,\
                 InvalidExpIdException,\
-                BatchException) as e:
+                BatchException,\
+                HpcException,
+                NoSuchCustomCommandException) as e:
             print(e)
         except Exception as e:
             print "Unchecked exception"
