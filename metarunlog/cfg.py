@@ -32,14 +32,34 @@ rstTempl = \
 files:{{files}}
 """
 custom = {
-'score' : [
-    {
-        'cwd': '~/attila/301/VLLP/buildDNN.SI.1/torchTest',
-        'command': 'attila test.py -L {loc} -M 10',
-    },
-    {
-        'cwd': '~/attila/301/VLLP/scoring_',
-        'command': 'attila score.py --langID=301.tune ~/attila/301/VLLP/buildDNN.SI.1/torchTest/ctm/{loc}/0.053/'
-    }
+    "score": [
+      {
+        "command": "mkdir -p ./output/{{relloc}}/ctm/{{acwt}}"
+      },
+      {
+        "command": "attila test.py -L {{relloc}} -w {{acwt}}",
+        "cwd": "~/attila/301/VLLP/buildDNN.SI.1/torchTest",
+        "output": "ctm/{{acwt}}/attila_decode.log"
+      },
+      {
+        "command": "attila score.py --langID=301.tune {{absloc}}/ctm/{{acwt}}/",
+        "cwd": "~/attila/301/VLLP/scoring_",
+        "output": "ctm/{{acwt}}/attila_score.log"
+      }
+    ],
+    "scoreSome": [
+      {
+        "command": "mkdir -p ./output/{{relloc}}/ctm{{uttlim}}/{{acwt}}"
+      },
+      {
+        "command": "attila test.py -L {{relloc}} -w {{acwt}} -M {{uttlim}}",
+        "cwd": "~/attila/301/VLLP/buildDNN.SI.1/torchTest",
+        "output": "ctm{{uttlim}}/{{acwt}}/attila_decode.log"
+      },
+      {
+        "command": "attila score.py --langID=301.tune {{absloc}}/ctm{{uttlim}}/{{acwt}}/",
+        "cwd": "~/attila/301/VLLP/scoring_",
+        "output": "ctm{{uttlim}}/{{acwt}}/attila_score.log"
+      }
     ]
 }

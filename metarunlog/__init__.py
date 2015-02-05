@@ -3,7 +3,7 @@
 # Author: Tom Sercu
 # Date: 2015-01-23
 
-import metarunlog.cfg as cfg
+import metarunlog.cfg as cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
 import os
 import sys
 from os import listdir
@@ -15,7 +15,7 @@ import pdb
 import datetime
 from collections import OrderedDict
 from shutil import copy as shcopy
-from jinja2 import Template
+from jinja2 import Template, Environment, meta
 import itertools
 import getpass
 
@@ -109,11 +109,20 @@ class MetaRunLog:
         self.basedir = basedir
         self._loadBasedirConfig()
         self.outdir  = join(self.basedir, cfg.outdir)
-        if not isdir(self.outdir): raise InvalidOutDirException("Need output directory " + self.outdir)
+        if not isdir(self.outdir): raise InvalidOutDirException("Need output directory " + self.outdir + "  Fix your .mrl.cfg file")
         self.expDirList = sorted([x for x in listdir(self.outdir) if self._checkValidExp(x)])
         self.expList = [int(x) for x in self.expDirList]
         self.lastExpId = None if not self.expList else self.expList[-1]
         self.hpcPass = None
+        # parse the custom commands into templates and extract the optional arguments for argparse
+        self.jEnv = Environment()
+        self.customTemplates = {customName:[]  for customName in cfg.custom.keys()}
+        self.customOptVars = {customName:set() for customName in cfg.custom.keys()}
+        for customName, cList in cfg.custom.iteritems():
+            for cmdEnv in cList:
+                self.customTemplates[customName].append({envKey: self.jEnv.from_string(cmd) for envKey, cmd in cmdEnv.iteritems()})
+                for cmd in cmdEnv.values():
+                    self.customOptVars[customName].update(meta.find_undeclared_variables(self.jEnv.parse(cmd)))
 
     def _loadBasedirConfig(self):
         try:
@@ -225,6 +234,7 @@ class MetaRunLog:
 
     def hpcSubmit(self, args):
         # TODO skip the qsub file and qsub all from mrl. Use _getRunLocations function
+        # TODO Use custom() for this? Add pwd function
         expId = self._resolveExpId(args.expId)
         expDir = self._getExpDir(expId)
         remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
@@ -274,24 +284,29 @@ class MetaRunLog:
             self._hpc(cmd, ssh=False)
 
     def custom(self, args):
-        if args.command not in cfg.custom:
-            raise NoSuchCustomCommandException("Command {} not defined in .mrl.cfg (choose from {} or define it)",
-                    args.command, cfg.custom.keys())
-        cmds = cfg.custom[args.command]
+        customName = args.customName
+        cmdTemplates = self.customTemplates[customName]
         expId = self._resolveExpId(args.expId)
         expConfig = self._getExpConf(expId)
         runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
-        # experiments
-        for loc in runLocs:
-            print "Custom command {} for location {}".format(args.command, loc)
-            for cmdEnv in cmds:
+        originalCwd = os.getcwd() # self.basedir if ran through ./mrl
+        cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
+        cmdParams.update(expConfig)
+        cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
+        # Render & run the commands for all experiments
+        for relloc in runLocs:
+            absloc = join(self.outdir, relloc)
+            print "{} for location {}".format(customName, relloc)
+            # Make location cmdParams
+            cmdParams.update({'relloc': relloc, 'absloc': absloc})
+            # Execute commands in their environment
+            for cmdEnvTemplate in cmdTemplates:
+                cmdEnv = {k:tmpl.render(cmdParams) for k,tmpl in cmdEnvTemplate.items()}
                 if 'cwd' in cmdEnv:
-                    originalCwd = os.getcwd()
                     os.chdir(os.path.expanduser(cmdEnv['cwd']))
-                cmd = cmdEnv['command'].format(loc=loc)
-                print cmd
-                output = subprocess.check_output(cmd, shell=True)
-                print "Output tail: ", output[-100:].replace("\n", "\\n")
+                print cmdEnv['command']
+                stdout = open(join(absloc, cmdEnv['output']),"w") if 'output' in cmdEnv else None
+                subprocess.call(cmdEnv['command'], stdout=stdout, shell=True)
                 if 'cwd' in cmdEnv:
                     os.chdir(originalCwd)
 
@@ -422,14 +437,36 @@ class MetaRunLog:
         return expConfig
 
 def main():
+    try:
+        mrlState = MetaRunLog(os.getcwd())
+    except InvalidOutDirException as e:
+        print(e)
+        return
+    except NoBasedirConfig as e:
+        parser = argparse.ArgumentParser(
+                description='No valid .mrl.cfg file found. Choose init to initialize, \
+                        or raiseException to see what went wrong.')
+        subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands')
+        # init basedir
+        parser_init = subparsers.add_parser('init', help='init current directory as basedir. Should typically be your git top-level dir.')
+        parser_init.add_argument('outdir', default=cfg.outdir, help='where experiment run directories will be made and config/models files will be saved.')
+        parser_init.set_defaults(mode='init')
+        parser_raise = subparsers.add_parser('raise', help='Raise the NoBasedirConfig exception')
+        parser_raise.set_defaults(mode='raise')
+        args = parser.parse_args()
+        if args.mode == 'init':
+            try:
+                print initBasedir(os.getcwd(), args)
+            except InvalidOutDirException as e2:
+                print(e2)
+            return
+        elif args.mode == 'raise':
+            raise
+    # Resume normal operation.
     parser = argparse.ArgumentParser(description='Metarunlog.')
     #mode_choices = [m for m in dir(MetaRunLog) if '_' not in m]
     #parser.add_argument('mode', metavar='mode', help='Mode to run metarunlog.', choices=mode_choices)
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands')
-    # init basedir
-    parser_init = subparsers.add_parser('init', help='init current directory as basedir. Should typically be your git top-level dir.')
-    parser_init.add_argument('outdir', default=cfg.outdir, help='where experiment run directories will be made and config/models files will be saved.')
-    parser_init.set_defaults(mode='initBasedir')
     # new
     parser_new = subparsers.add_parser('new', help='new experiment directory.')
     parser_new.add_argument('-nc', '--notclean', action='store_const', const=True)
@@ -465,39 +502,29 @@ def main():
     parser_hpcFetch.add_argument('-data', help='Fetch hpc output data.', action='store_const', const=True)
     parser_hpcFetch.set_defaults(mode='hpcFetch')
     # custom
-    parser_custom = subparsers.add_parser('custom', help = 'Run custom shell commands specified in your .mrl.cfg file')
-    parser_custom.add_argument('command', help='command')
-    parser_custom.add_argument('expId', help='experiment ID', default='last', nargs='?')
-    parser_custom.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
-    parser_custom.set_defaults(mode='custom')
+    custom_parsers = []
+    for customName, commandList in cfg.custom.iteritems():
+        optVars = mrlState.customOptVars[customName]
+        parser_custom = subparsers.add_parser(customName, help = 'custom cmd {} from your .mrl.cfg file'.format(customName))
+        parser_custom.add_argument('expId', help='experiment ID', default='last', nargs='?')
+        parser_custom.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+        for varName in optVars:
+            parser_custom.add_argument('-'+varName)
+        parser_custom.set_defaults(mode='custom')
+        parser_custom.set_defaults(customName=customName)
+        custom_parsers.append(parser_custom)
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
-    if args.mode == 'initBasedir':
-        try:
-            print initBasedir(os.getcwd(), args)
-        except InvalidOutDirException as e:
-            print(e)
-        return
     try:
-        mrlState = MetaRunLog(os.getcwd())
-    except InvalidOutDirException as e:
+        ret = getattr(mrlState, args.mode)(args)
+        if ret: print(ret)
+    except (NoCleanStateException,\
+            InvalidExpIdException,\
+            BatchException,\
+            HpcException,
+            NoSuchCustomCommandException) as e:
         print(e)
-        return
-    except NoBasedirConfig as e:
-        print "No valid basedir config file in {}".format(e.basedir)
-        print "Error on loading: {}".format(e.orig_e)
-        print "Run mrl init in this directory first to make it a base directory."
-    else:
-        try:
-            ret = getattr(mrlState, args.mode)(args)
-            if ret: print(ret)
-        except (NoCleanStateException,\
-                InvalidExpIdException,\
-                BatchException,\
-                HpcException,
-                NoSuchCustomCommandException) as e:
-            print(e)
-        except Exception as e:
-            print "Unchecked exception"
-            raise
+    except Exception as e:
+        print "Unchecked exception"
+        raise
