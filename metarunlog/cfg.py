@@ -1,8 +1,8 @@
 outdir          = 'output'
 singleExpFormat = '{expId:06d}'
-batchExpFormat  = '{expId:06d}-{subExpId:03d}'
+batchExpFormat  = '{subExpId:03d}'
 gitFailUntrackedDefault= 'no'
-copyFiles       = ['conf.lua', 'models.lua']
+copyFiles       = ['conf.lua', 'modeldef.lua']
 batchTemplFile  = 'conf.lua' # what file is expanded into template when calling batch
 launchScriptFile= 'run{}.q'
 qsubFile        = 'qsub.sh'
