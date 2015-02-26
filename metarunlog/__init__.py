@@ -222,10 +222,12 @@ class MetaRunLog:
             subExpDir = join(expDir, self._fmtBatchExp(expId=expId, subExpId=i))
             if i > len(oldBatchList):
                 os.mkdir(subExpDir)
+            self._copyConfigFrom(expDir, subExpDir)
             with open(join(subExpDir, cfg.batchTemplFile), "w") as fh:
                 fh.write(fileContent)
                 fh.write("\n")
             self._renderLaunchScript(subExpDir, expConfig, self._fmtLaunchScriptFile(expId, i))
+
         # update the current .mrl file
         self._saveExpDotmrl(expDir, expConfig)
         self._writeqsubFile(expId, len(bp.output))
@@ -352,7 +354,7 @@ class MetaRunLog:
     def _writeqsubFile(self, expId, N):
         # TODO make git clone  and checkout part of this to avoid 100 clones to the subdirs.
         expDir = self._getExpDir(expId)
-        command = 'cd {} && qsub {} && cd .. && sleep 1 && echo "qsubbed {}"'
+        command = 'cd {} && qsub {} && cd .. && sleep 0.01 && echo "qsubbed {}"'
         subdirs = [self._fmtBatchExp(expId=expId, subExpId=i) for i in range(1,N+1)]
         lsfiles = [self._fmtLaunchScriptFile(expId, i) for i in range(1,N+1)]
         cmds = [command.format(subdir, lsfile, subdir) for lsfile,subdir in zip(lsfiles,subdirs)]
