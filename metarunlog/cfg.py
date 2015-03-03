@@ -27,11 +27,11 @@ cd code
 git checkout {{gitHash}}
 luajit go.lua -conf ../conf.lua -device 1 -noprogress -resume
 """
-analysis_overview = { # {funcname: ('extra_arg1', ...),  .. }
-    'bestPerf': 'table',
+analysis_overview = { # {funcname: ('extra_arg1', extrarg2, ), .. }
+    'bestPerf': (),
 }
 analysis_subexp = {
-    'plotSinglePerf': 'plot', # plot
+    'plotSinglePerf': (),
 }
 analysis_webdir = '/web/ts2387/lo/'
 custom = {

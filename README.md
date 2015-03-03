@@ -73,12 +73,13 @@ command = {
     * overview
     * a section per subexp
 + Generate the overview section as follows:
-    * Use cfg.analysis\_overview = {'funcname':returntype, ... }
-    * returntype is one of: [plot, table, text]
-    * The functions will be called as:
+    * Use cfg.analysis\_overview = {'funcname': (xarg1, xarg2, etc), ... }
+    * returnval is of the format: [(data, rtype, rheader or None), (...) ... ]
+    * rtype is plot, table or text.
+    * The functions are called as: getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, \*xtrargs)
 + Generate per-subexp sections:
-    * Use cfg.analysis\_subexp (the same way as above)
-    * The functions will be called as: 
+    * Use cfg.analysis\_subexp (the same way as above and same returnval format)
+    * The functions are called as: getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, \*xtrargs)
 + Make ipython / itorch notebook from template
 
 ## Todo

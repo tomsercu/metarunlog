@@ -73,7 +73,6 @@ class BatchParser:
     BatchParser class is initialized with batch-template (list of lines)
     including the last lines determining the values,
     and generates self.output as a list of strings (that can be written to file).
-    Raises xxx.
     """
     def __init__(self, template):
         grid = OrderedDict()
@@ -327,35 +326,25 @@ class MetaRunLog:
         batchlist = expConfig['batchlist']
         subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
         Dparams = pd.DataFrame(batchlist, index=subExpIds)
-        outhtml = '<h1>Experiment {} - {}</h1>\n'.format(cfg.singleExpFormat.format(expId=expId),\
-                                                         expConfig['timestamp'].split('T')[0])
-        try:
-            outhtml += subprocess.check_output(['markdown',join(expDir,'.mrl.note')], \
-                    stderr=subprocess.STDOUT) + '\n'
-            print "Parsed {}".format(join(expDir, '.mrl.note'))
-        except subprocess.CalledProcessError as e:
-            if 'No such file or directory' in e.output: 
-                pass # no .mrl.note, no problem
-                print "Didn't find {}".format(join(expDir, '.mrl.note'))
-            else:
-                print errmsg
-                raise
-        # TODO keep functions in order with ordereddict in .mrl.cfg
-        # TODO use decent templating to generate index and each subsection
+        outhtml = analyze.HtmlFile()
+        outhtml.addTitle('Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId),\
+                                                         expConfig['timestamp'].split('T')[0]))
+        outhtml.parseNote(join(expDir,'.mrl.note'))
+        # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
         # analysis_overview functions
-        for funcname, returntype in cfg.analysis_overview.items():
-            outhtml += '<h2>{} - {}</h2>\n'.format('overview', funcname)
-            outhtml += self.addAnalysis(getattr(analyze, funcname), returntype, expDir, outdir, subExpIds, Dparams)
+        for funcname, xtrargs in cfg.analysis_overview.items():
+            outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
+            retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
+            outhtml.addRetVal(retval)
         # per exp functions
         for subExpId in subExpIds:
             subExpDir = join(expDir, subExpId)
-            outhtml += '<h2>{} - {}</h2>\n'.format('subexp', subExpId)
-            for funcname, returntype in cfg.analysis_subexp.items():
-                outhtml += '<h3>{}</h3>\n'.format(funcname)
-                outhtml += self.addAnalysis(getattr(analyze, funcname), returntype, subExpDir, outdir, Dparams, subExpId)
-        with open(join(outdir, 'index.html'), 'w') as fh:
-            fh.write(outhtml)
-            print "Wrote output to {}".format(join(outdir, 'index.html'))
+            outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
+            for funcname, xtrargs in cfg.analysis_subexp.items():
+                outhtml.addHeader('{}'.format(funcname), 2)
+                retval = getattr(analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
+                outhtml.addRetVal(retval)
+        outhtml.render(join(outdir, 'index.html'))
         if cfg.analysis_webdir:
             webdir = join(cfg.analysis_webdir, self._fmtSingleExp(expId))
             if not os.path.exists(webdir):
@@ -364,20 +353,6 @@ class MetaRunLog:
             subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
             subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
             print "Copied to webdir {}".format(webdir)
-
-    def addAnalysis(self, func, returntype, *args):
-        retval = func(*args)
-        if not retval: # output not there
-            return ""
-        outhtml = "<p>\n"
-        if returntype == 'table': 
-            outhtml += retval.to_html() + '\n'
-        elif returntype == 'plot': 
-            outhtml += ''.join(['<img src="{}"></img>\n'.format(plotfn) for plotfn in retval])
-        elif returntype == 'text':
-            outhtml += retval + '\n'
-        outhtml += '</p>\n'
-        return outhtml
 
     def _hpc(self, cmd, ssh=True):
         if not self.hpcPass:
