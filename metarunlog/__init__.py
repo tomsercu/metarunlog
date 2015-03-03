@@ -152,10 +152,11 @@ class MetaRunLog:
         expConfig['user'] = getpass.getuser()
         expConfig['shortDescription'] = args.description if args.description else ""
         expConfig['longDescription'] = "" # edit into .mrl file directly
-        # make dir and symlink  and
+        # make dir and symlink
         expDir = self._getExpDir(expId, True)
-        if self.lastExpId: os.remove(join(self.outdir,'last'))
-        os.symlink(relpath(expDir,self.outdir), join(self.outdir, 'last'))
+        if self.lastExpId and os.path.lexists(join(self.basedir,'last')): 
+            os.remove(join(self.basedir,'last'))
+        os.symlink(relpath(expDir,self.basedir), join(self.basedir, 'last'))
         os.mkdir(expDir)
         # After this point: expDir is made, no more exception throwing! copy config files
         try:
@@ -497,7 +498,7 @@ def main():
     parser_hpcSubmit.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_hpcSubmit.add_argument('-replace', help='Ignore existing hpc data.', action='store_const', const=True)
     parser_hpcSubmit.set_defaults(mode='hpcSubmit')
-    # hpc Submit
+    # hpc Fetch
     parser_hpcFetch = subparsers.add_parser('hpcFetch', help = 'Fetch output logs and optionally data from hpc')
     parser_hpcFetch.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_hpcFetch.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
