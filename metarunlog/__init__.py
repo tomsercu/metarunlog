@@ -313,6 +313,72 @@ class MetaRunLog:
                 if 'cwd' in cmdEnv:
                     os.chdir(originalCwd)
 
+    def analyze(self, args):
+        import pandas as pd
+        import analyze
+        expId = self._resolveExpId(args.expId)
+        expDir = self._getExpDir(expId)
+        expConfig = self._getExpConf(expId)
+        print "Analyze expId {} in path {}".format(expId, expDir)
+        assert 'batchlist' in expConfig, 'TODO implement analysis for non-batch'
+        outdir = args.outdir if args.outdir else join(expDir, 'analysis')
+        if not os.path.exists(outdir): os.mkdir(outdir)
+        # load the params into dataframe
+        batchlist = expConfig['batchlist']
+        subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
+        Dparams = pd.DataFrame(batchlist, index=subExpIds)
+        outhtml = '<h1>Experiment {} - {}</h1>\n'.format(cfg.singleExpFormat.format(expId=expId),\
+                                                         expConfig['timestamp'].split('T')[0])
+        try:
+            outhtml += subprocess.check_output(['markdown',join(expDir,'.mrl.note')], \
+                    stderr=subprocess.STDOUT) + '\n'
+            print "Parsed {}".format(join(expDir, '.mrl.note'))
+        except subprocess.CalledProcessError as e:
+            if 'No such file or directory' in e.output: 
+                pass # no .mrl.note, no problem
+                print "Didn't find {}".format(join(expDir, '.mrl.note'))
+            else:
+                print errmsg
+                raise
+        # TODO keep functions in order with ordereddict in .mrl.cfg
+        # TODO use decent templating to generate index and each subsection
+        # analysis_overview functions
+        for funcname, returntype in cfg.analysis_overview.items():
+            outhtml += '<h2>{} - {}</h2>\n'.format('overview', funcname)
+            outhtml += self.addAnalysis(getattr(analyze, funcname), returntype, expDir, outdir, subExpIds, Dparams)
+        # per exp functions
+        for subExpId in subExpIds:
+            subExpDir = join(expDir, subExpId)
+            outhtml += '<h2>{} - {}</h2>\n'.format('subexp', subExpId)
+            for funcname, returntype in cfg.analysis_subexp.items():
+                outhtml += '<h3>{}</h3>\n'.format(funcname)
+                outhtml += self.addAnalysis(getattr(analyze, funcname), returntype, subExpDir, outdir, Dparams, subExpId)
+        with open(join(outdir, 'index.html'), 'w') as fh:
+            fh.write(outhtml)
+            print "Wrote output to {}".format(join(outdir, 'index.html'))
+        if cfg.analysis_webdir:
+            webdir = join(cfg.analysis_webdir, self._fmtSingleExp(expId))
+            if not os.path.exists(webdir):
+                os.mkdir(webdir)
+            subprocess.call("cp -r {}/* {}/".format(outdir, webdir), shell=True)
+            subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
+            subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
+            print "Copied to webdir {}".format(webdir)
+
+    def addAnalysis(self, func, returntype, *args):
+        retval = func(*args)
+        if not retval: # output not there
+            return ""
+        outhtml = "<p>\n"
+        if returntype == 'table': 
+            outhtml += retval.to_html() + '\n'
+        elif returntype == 'plot': 
+            outhtml += ''.join(['<img src="{}"></img>\n'.format(plotfn) for plotfn in retval])
+        elif returntype == 'text':
+            outhtml += retval + '\n'
+        outhtml += '</p>\n'
+        return outhtml
+
     def _hpc(self, cmd, ssh=True):
         if not self.hpcPass:
             self.hpcPass= getpass.getpass("Password for hpc: ")
@@ -516,6 +582,11 @@ def main():
         parser_custom.set_defaults(mode='custom')
         parser_custom.set_defaults(customName=customName)
         custom_parsers.append(parser_custom)
+    # analyze
+    parser_Analyze = subparsers.add_parser('analyze', help = 'Analyze expId by running the functions from analyze module, specified in .mrl.cfg')
+    parser_Analyze.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_Analyze.add_argument('-outdir', help='path to output directory, default: expDir/analysis/')
+    parser_Analyze.set_defaults(mode='analyze')
     #PARSE
     args = parser.parse_args()
     if DEBUG: print args
