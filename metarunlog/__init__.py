@@ -207,12 +207,16 @@ class MetaRunLog:
                 raise BatchException("Experiment {} is already expanded into a batch of length {}".\
                         format(expId, len(expConfig['batchlist'])))
         # make BatchParser object
-        with open(join(expDir, cfg.batchTemplFile)) as fh:
-            bp = BatchParser(fh.readlines())
+        try:
+            with open(join(expDir, cfg.batchTemplFile)) as fh:
+                bp = BatchParser(fh.readlines())
+        except jinja2.exceptions.TemplateSyntaxError as e:
+            err = "TemplateSyntaxError in your {} template file: \n {}".format(cfg.batchTemplFile, str(e))
+            raise BatchException(err)
         # check if BatchParser output is non-empty
         if not bp.output:
             err = "BatchParser output is empty, are you sure {} is a batch template?"
-            err.format(join(expDir, cfg.batchTemplFile))
+            err = err.format(join(expDir, cfg.batchTemplFile))
             raise BatchException(err)
         # generate output directories, write the output config files
         expConfig['batchlist'] = []
@@ -230,7 +234,10 @@ class MetaRunLog:
         # update the current .mrl file
         self._saveExpDotmrl(expDir, expConfig)
         self._writeqsubFile(expId, len(bp.output))
-        os.remove(join(expDir, self._fmtLaunchScriptFile(expId))) # this conf is a template so doesnt make sense to run it
+        try:
+            os.remove(join(expDir, self._fmtLaunchScriptFile(expId))) # this conf is a template so doesnt make sense to run it
+        except OSError:
+            pass
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
 
     def hpcSubmit(self, args):
@@ -564,7 +571,6 @@ def main():
     parser_Analyze.set_defaults(mode='analyze')
     #PARSE
     args = parser.parse_args()
-    if DEBUG: print args
     try:
         ret = getattr(mrlState, args.mode)(args)
         if ret: print(ret)
