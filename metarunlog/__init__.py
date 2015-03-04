@@ -149,8 +149,7 @@ class MetaRunLog:
         if not gitclean and uncommited: expConfig['gitHash'] += '-sloppy'
         expConfig['timestamp'] = datetime.datetime.now().isoformat().split('.')[0]
         expConfig['user'] = getpass.getuser()
-        expConfig['shortDescription'] = args.description if args.description else ""
-        expConfig['longDescription'] = "" # edit into .mrl file directly
+        expConfig['description'] = args.description if args.description else ""
         # make dir and symlink
         expDir = self._getExpDir(expId, True)
         if self.lastExpId and os.path.lexists(join(self.basedir,'last')): 
@@ -190,7 +189,7 @@ class MetaRunLog:
             if args.gdesc:
                 row += "\t" + expConfig['gitDescription']
             if args.desc:
-                row += "\t" + expConfig['shortDescription']
+                row += "\t" + expConfig['description']
             print row
         return ""
 
@@ -327,8 +326,9 @@ class MetaRunLog:
         subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
         Dparams = pd.DataFrame(batchlist, index=subExpIds)
         outhtml = analyze.HtmlFile()
-        outhtml.addTitle('Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId),\
-                                                         expConfig['timestamp'].split('T')[0]))
+        title = 'Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
+        if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
+        outhtml.addTitle(title)
         outhtml.parseNote(join(expDir,'.mrl.note'))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
         # analysis_overview functions

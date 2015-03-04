@@ -6,7 +6,6 @@ copyFiles       = ['conf.lua', 'modeldef.lua']
 batchTemplFile  = 'conf.lua' # what file is expanded into template when calling batch
 launchScriptFile= 'run{}.q'
 qsubFile        = 'qsub.sh'
-rstFile         = '.mrl.rst'
 #giturl          = 'git@github.com:tomsercu/lo.git'
 giturl          = 'cims:~/lo'
 hpcServer       = 'mercer'  # needs hpc tunnel to be set up! Assumes entry in .ssh/config specifying port & user
