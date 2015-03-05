@@ -29,6 +29,8 @@ class NoBasedirConfig(Exception):
     def __init__(self, basedir, e):
         self.basedir = basedir
         self.orig_e = e
+    def __str__(self):
+        return "NoBasedirConfig in {} : {}".format(self.basedir, self.orig_e)
 class InvalidExpIdException(Exception):
     pass
 class BatchException(Exception):
@@ -175,9 +177,7 @@ class MetaRunLog:
 
     def info(self, args):
         """ load info from experiment id and print it """
-        expId = self._resolveExpId(args.expId)
-        expDir = self._getExpDir(expId)
-        expConfig = self._getExpConf(expId)
+        expId, expDir, expConfig = self._loadExp(args.expId)
         items = ['',expDir,'']
         maxkeylen = max(len(k) for k,v in expConfig.iteritems())
         items += ["%*s : %.80s" % (maxkeylen,k,str(v)) for k,v in expConfig.iteritems()]
@@ -200,9 +200,7 @@ class MetaRunLog:
 
     def batch(self, args):
         # resolve id
-        expId = self._resolveExpId(args.expId)
-        expDir = self._getExpDir(expId)
-        expConfig = self._getExpConf(expId)
+        expId, expDir, expConfig = self._loadExp(args.expId)
         # check if already expanded in batch and cancel
         oldBatchList = []
         if 'batchlist' in expConfig:
@@ -246,12 +244,9 @@ class MetaRunLog:
         return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
 
     def hpcSubmit(self, args):
-        # TODO skip the qsub file and qsub all from mrl. Use _getRunLocations function
-        # TODO Use custom() for this? Add pwd function
-        expId = self._resolveExpId(args.expId)
-        expDir = self._getExpDir(expId)
+        # TODO Use custom() for this. Add remote setting for custom
+        expId, expDir, expConfig = self._loadExp(args.expId)
         remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
-        expConfig = self._getExpConf(expId)
         if 'hpcSubmit' in expConfig and not args.replace:
             raise HpcException("hpcSubmit key already in {} .mrl file. Aborting to avoid data loss.".format(expId))
         # scp to copy to remote
@@ -279,10 +274,8 @@ class MetaRunLog:
         self._saveExpDotmrl(expDir, expConfig)
 
     def hpcFetch(self, args):
-        expId = self._resolveExpId(args.expId)
-        expDir = self._getExpDir(expId)
+        expId, expDir, expConfig = self._loadExp(args.expId)
         remoteExpDir = join(cfg.hpcBasedir, cfg.outdir, self._fmtSingleExp(expId))
-        expConfig = self._getExpConf(expId)
         if 'hpcSubmit' not in expConfig:
             raise HpcException("hpcSubmit key not in in {} .mrl file. Was this launched as hpc job?".format(expId))
         # Locations to fetch from
@@ -297,10 +290,9 @@ class MetaRunLog:
             self._hpc(cmd, ssh=False)
 
     def custom(self, args):
+        expId, expDir, expConfig = self._loadExp(args.expId)
         customName = args.customName
         cmdTemplates = self.customTemplates[customName]
-        expId = self._resolveExpId(args.expId)
-        expConfig = self._getExpConf(expId)
         runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
         originalCwd = os.getcwd() # self.basedir if ran through ./mrl
         cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
@@ -326,9 +318,7 @@ class MetaRunLog:
     def analyze(self, args):
         import pandas as pd
         import analyze
-        expId = self._resolveExpId(args.expId)
-        expDir = self._getExpDir(expId)
-        expConfig = self._getExpConf(expId)
+        expId, expDir, expConfig = self._loadExp(args.expId)
         print "Analyze expId {} in path {}".format(expId, expDir)
         outdir = args.outdir if args.outdir else join(expDir, 'analysis')
         if not os.path.exists(outdir): os.mkdir(outdir)
@@ -476,6 +466,20 @@ class MetaRunLog:
         # parse each .mrl file in subdir? Probably overkill
         return True
 
+    def _loadExp(self, argExpId):
+        expId = self._resolveExpId(argExpId)
+        expDir = self._getExpDir(expId)
+        expConfig = self._getExpConf(expId)
+        # Load .mrl.cfg file if it exists
+        try:
+            with open(join(expDir, '.mrl.cfg')) as fh:
+                bconf = json.load(fh)
+                for k,v in bconf.iteritems():
+                    setattr(cfg,k,v)
+        except IOError: #file doesnt exist -> write a template
+            open(join(expDir, '.mrl.cfg'),'w').write("{\n}\n")
+        return (expId, expDir, expConfig)
+
     def _resolveExpId(self, expId):
         """ resolves expId from int, 'last' or path, and returns directory,
         or raise error if not found """
@@ -495,6 +499,7 @@ class MetaRunLog:
         if not new and not expId in self.expList:
             raise InvalidExpIdException("Experiment {} not found.".format(expId))
         return join(self.outdir, self._fmtSingleExp(expId))
+    
     def _getExpConf(self, expId):
         with open(join(self._getExpDir(expId), '.mrl')) as fh:
             expConfig = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(fh.read())
