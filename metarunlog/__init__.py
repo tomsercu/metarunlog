@@ -176,8 +176,12 @@ class MetaRunLog:
     def info(self, args):
         """ load info from experiment id and print it """
         expId = self._resolveExpId(args.expId)
+        expDir = self._getExpDir(expId)
         expConfig = self._getExpConf(expId)
-        return "\n".join("{} : {}".format(k,v) for k,v in expConfig.iteritems())
+        items = ['',expDir,'']
+        maxkeylen = max(len(k) for k,v in expConfig.iteritems())
+        items += ["%*s : %.80s" % (maxkeylen,k,str(v)) for k,v in expConfig.iteritems()]
+        return "\n".join(items)
 
     def ls(self, args):
         for expId in self.expList[::-1]:
@@ -542,6 +546,8 @@ def main():
     parser_info = subparsers.add_parser('info', help='show experiment info.')
     parser_info.add_argument('expId', default='last', help='exp number, directory, or last', nargs='?')
     parser_info.set_defaults(mode='info')
+    parser_infosc = subparsers.add_parser('last', help='shortcut for mrl info last.')
+    parser_infosc.set_defaults(mode='info', expId='last')
     # ls
     parser_ls = subparsers.add_parser('ls', help = 'list output dir, newest first.')
     parser_ls.add_argument('-tm', action='store_const', const=True, help='Show timestamp')
