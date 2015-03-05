@@ -6,6 +6,8 @@ import matplotlib; matplotlib.use('agg')
 import matplotlib.pyplot as plt
 import markdown
 
+## OVERVIEW FUNCTIONS
+
 def bestPerf(expDir, outdir, subExpIds, Dparams, barxlim=[0.5, 1.0]):
     print("overview - bestPerf: table and plot of best errors, {} subExpIds".format(len(subExpIds)))
     perffns = [join(expDir, subExpId, 'logs/perf.csv') for subExpId in subExpIds]
@@ -35,15 +37,44 @@ def bestPerf(expDir, outdir, subExpIds, Dparams, barxlim=[0.5, 1.0]):
     res['val_nll'] = [brow['val_nll'] for brow in bestrows]
     res['train_nll'] = [brow['train_nll'] for brow in bestrows]
     # make barplot
-    pfn = 'ov_bestPerf_bars.png'
-    res[['val_err', 'train_err']].plot(kind='barh')
+    pfn = 'ov_bestPerf_bars.svg'
+    res[['train_err', 'val_err']].plot(kind='barh')
     plt.legend(loc=2)
     plt.xlim(*barxlim)
     plt.savefig(join(outdir, pfn))
     plt.close()
     return [(summary, 'text', None), (res, 'table', None), (pfn, 'plot', None)]
 
-def plotSinglePerf(expDir, outdir, Dparams=None, runId='def'):
+def plotAllPerfLines(expDir, outdir, subExpIds, Dparams, metric, ylim):
+    print("overview - plotAllPerfLines: table and plot of best errors, {} subExpIds".format(len(subExpIds)))
+    perffns = [join(expDir, subExpId, 'logs/perf.csv') for subExpId in subExpIds]
+    perfmats = []
+    for fn in perffns:
+        try:
+            perfmats.append(pd.read_csv(fn))
+        except:
+            perfmats.append(None)
+    perfmats = pd.Series(perfmats, index=subExpIds)
+    drop = perfmats.isnull()
+    res = Dparams[~perfmats.isnull()]
+    perfmats = perfmats[~perfmats.isnull()]
+    # plot
+    fig, axes = plt.subplots(nrows=1, ncols=len(perfmats))
+    for i,(subExpId, df) in enumerate(perfmats.iteritems()):
+        df[['train_'+metric, 'val_' + metric]].plot(ax = axes[i])
+        axes[i].set_title(subExpId)
+        axes[i].set_ylim(*ylim)
+    # make the figure ridiculously wide 
+    w,h = fig.get_size_inches()
+    fig.set_size_inches(len(perfmats)*0.5*w, 0.5*h)
+    pfn = 'plotAllPerfLines.svg'
+    plt.savefig(join(outdir,pfn),bbox_inches='tight')
+    plt.close()
+    return [(pfn, 'plot', None)]
+
+## INDIVIDUAL FUNCTIONS
+
+def plotSinglePerf(expDir, outdir, Dparams=None, runId='def', ylim={'err':None, 'nll':None}):
     print("plotSinglePerf: plot train/val err and nll - {}".format(runId))
     fn = join(expDir, 'logs/perf.csv')
     try:
@@ -51,12 +82,16 @@ def plotSinglePerf(expDir, outdir, Dparams=None, runId='def'):
     except:
         return None
     else:
-        pfn1 = 'plotSinglePerf_{}_err.png'.format(runId)
+        pfn1 = 'plotSinglePerf_{}_err.svg'.format(runId)
         perfmat[['train_err', 'val_err']].plot()
+        if ylim['err']:
+            plt.ylim(*ylim['err'])
         plt.savefig(join(outdir, pfn1))
         plt.close()
-        pfn2 = 'plotSinglePerf_{}_nll.png'.format(runId)
+        pfn2 = 'plotSinglePerf_{}_nll.svg'.format(runId)
         perfmat[['train_nll', 'val_nll']].plot()
+        if ylim['nll']:
+            plt.ylim(*ylim['nll'])
         plt.savefig(join(outdir, pfn2))
         plt.close()
         if Dparams:
