@@ -169,6 +169,7 @@ class MetaRunLog:
             print("Still succesfully created new experiment directory.")
         self._saveExpDotmrl(expDir, expConfig)
         self._renderLaunchScript(expDir, expConfig, self._fmtLaunchScriptFile(expId))
+        self._putEmptyNote(expDir)
         self.lastExpId = expId
         return expDir
 
@@ -494,6 +495,10 @@ class MetaRunLog:
         with open(join(self._getExpDir(expId), '.mrl')) as fh:
             expConfig = json.JSONDecoder(object_pairs_hook=OrderedDict).decode(fh.read())
         return expConfig
+
+    def _putEmptyNote(self, expDir):
+        with open(join(expDir, '.mrl.note'),'w') as fh:
+            fh.write('#### Goal\n\n#### Observations\n\n#### Conclusions\n')
 
 def main():
     try:
