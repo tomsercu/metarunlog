@@ -325,31 +325,39 @@ class MetaRunLog:
         expDir = self._getExpDir(expId)
         expConfig = self._getExpConf(expId)
         print "Analyze expId {} in path {}".format(expId, expDir)
-        assert 'batchlist' in expConfig, 'TODO implement analysis for non-batch'
         outdir = args.outdir if args.outdir else join(expDir, 'analysis')
         if not os.path.exists(outdir): os.mkdir(outdir)
         # load the params into dataframe
-        batchlist = expConfig['batchlist']
-        subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
-        Dparams = pd.DataFrame(batchlist, index=subExpIds)
+        isBatch = 'batchlist' in expConfig
+        if isBatch:
+            batchlist = expConfig['batchlist']
+            subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
+            Dparams = pd.DataFrame(batchlist, index=subExpIds)
         outhtml = analyze.HtmlFile()
         title = 'Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
         outhtml.addTitle(title)
         outhtml.parseNote(join(expDir,'.mrl.note'))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
-        # analysis_overview functions
-        for funcname, xtrargs in cfg.analysis_overview.items():
-            outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
-            retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
-            outhtml.addRetVal(retval)
+        if isBatch:
+            # analysis_overview functions
+            for funcname, xtrargs in cfg.analysis_overview.items():
+                outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
+                retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
+                outhtml.addRetVal(retval)
         # per exp functions
-        for subExpId in subExpIds:
-            subExpDir = join(expDir, subExpId)
-            outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
+        if isBatch:
+            for subExpId in subExpIds:
+                subExpDir = join(expDir, subExpId)
+                outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
+                for funcname, xtrargs in cfg.analysis_subexp.items():
+                    outhtml.addHeader('{}'.format(funcname), 2)
+                    retval = getattr(analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
+                    outhtml.addRetVal(retval)
+        else:
             for funcname, xtrargs in cfg.analysis_subexp.items():
-                outhtml.addHeader('{}'.format(funcname), 2)
-                retval = getattr(analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
+                outhtml.addHeader('{}'.format(funcname), 1)
+                retval = getattr(analyze, funcname)(expDir, outdir, None, 'def', *xtrargs)
                 outhtml.addRetVal(retval)
         outhtml.render(join(outdir, 'index.html'))
         if cfg.analysis_webdir:

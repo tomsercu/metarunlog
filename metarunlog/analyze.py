@@ -43,8 +43,8 @@ def bestPerf(expDir, outdir, subExpIds, Dparams, barxlim=[0.5, 1.0]):
     plt.close()
     return [(summary, 'text', None), (res, 'table', None), (pfn, 'plot', None)]
 
-def plotSinglePerf(expDir, outdir, Dparams, runId):
-    print("subexp - plotSinglePerf: plot train/val err and nll - {}".format(runId))
+def plotSinglePerf(expDir, outdir, Dparams=None, runId='def'):
+    print("plotSinglePerf: plot train/val err and nll - {}".format(runId))
     fn = join(expDir, 'logs/perf.csv')
     try:
         perfmat = pd.read_csv(fn)
@@ -59,9 +59,12 @@ def plotSinglePerf(expDir, outdir, Dparams, runId):
         perfmat[['train_nll', 'val_nll']].plot()
         plt.savefig(join(outdir, pfn2))
         plt.close()
-        # first print my params (indented for markdown code)
-        myparams = '\n'.join('    '+x for x in str(Dparams.loc[runId]).split('\n'))
-        return [(myparams, 'text', 'Params'), (pfn1, 'plot', 'Error pct'), (pfn2, 'plot', 'nll loss')]
+        if Dparams:
+            # print my params (indented for markdown code)
+            myparams = '\n'.join('    '+x for x in str(Dparams).split('\n'))
+            return [(myparams, 'text', 'Params'), (pfn1, 'plot', 'Error pct'), (pfn2, 'plot', 'nll loss')]
+        else:
+            return [(pfn1, 'plot', 'Error pct'), (pfn2, 'plot', 'nll loss')]
 
 class HtmlFile:
     # TODO use jinja templating here
