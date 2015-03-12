@@ -198,7 +198,7 @@ class MetaRunLog:
             print row
         return ""
 
-    def batch(self, args):
+    def makebatch(self, args):
         # resolve id
         expId, expDir, expConfig = self._loadExp(args.expId)
         # check if already expanded in batch and cancel
@@ -562,11 +562,11 @@ def main():
     parser_ls.add_argument('-gdesc', action='store_const', const=True, help='Show git description')
     parser_ls.add_argument('-desc', action='store_const', const=True, help='Show experiment description')
     parser_ls.set_defaults(mode='ls')
-    # batch
-    parser_batch = subparsers.add_parser('batch', help = 'expand batch config template into config files')
+    # makebatch
+    parser_batch = subparsers.add_parser('makebatch', help = 'make batch of config files from batch config template')
     parser_batch.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_batch.add_argument('-replace', help='Overwrite config files if already expanded', action='store_const', const=True)
-    parser_batch.set_defaults(mode='batch')
+    parser_batch.set_defaults(mode='makebatch')
     # hpc Submit
     parser_hpcSubmit = subparsers.add_parser('hpcSubmit', help = 'scp output folder to hpc and run it by qsubbing')
     parser_hpcSubmit.add_argument('expId', help='experiment ID', default='last', nargs='?')
