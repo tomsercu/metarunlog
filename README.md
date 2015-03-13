@@ -50,18 +50,27 @@ The HPC support is fairly much tailored for my personal setup here at NYU but wi
 It assumes some things like having a hpc connection set up in your .ssh/config so you can ssh/scp with just the hostname ('mercer' in cfg.py).
 It also assumes qsub is available, some of the PBS flags might not make sense in another environment, but you can change the template in cfg.py and in your .mrl.cfg file.
 
-## Custom functions
-See custom() function, it's clear.
-They are parametrized in config with
+## Custom jobs and scheduling
+Metarunlog supports defining custom jobs. You typically want to use this for running the actual simulation, scoring, etc.
+
+First of all, there are three concepts:
++ jobs (defined in cfg): dictionary of job names. Each job consists of a list of commands. For example, {"go": [checkout code at right commitId, execute experiment, score experiment], ...}
++ resources (defined in cfg): {'clustername': {'scheduler':'', 'host': [list of (host, device) tuples], 'copyFiles': True}, ... }
++ schedulers (localScheduler, sshScheduler, pbsScheduler): classes that reads in your computing resources, your job, and expId. It then manages the execution.
+
+Jobs appear directly as commands in mrl -h. Running a job like this is the same as mrl scheduleLocal jobname.
+
+Jobs are parametrized in config with
 ``` python
 custom = {"commandName": [list of consecutive commands to be executed], ...}
 ```
-with each command in the list of commands a dictionary:
+with each command in the list of commands a dictionary (only "command" is required).
 ``` 
 command = {
    "cwd": "will chdir here first",
    "command": "will be executed with subprocess, shell=True",
-   "output": "will redirect output to this file inside the expDir (regardless of cwd)"
+   "output": "will redirect output to this file inside the expDir (regardless of cwd)",
+   "maxtime": time before killing the job, walltime for pbs.
 }
 ```
 

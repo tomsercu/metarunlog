@@ -33,35 +33,17 @@ analysis_subexp = {
     'plotSinglePerf': (),
 }
 analysis_webdir = '/web/ts2387/lo/'
-custom = {
-    "score": [
-      {
-        "command": "mkdir -p ./output/{{relloc}}/ctm/{{acwt}}"
-      },
-      {
-        "command": "attila test.py -L {{relloc}} -w {{acwt}}",
-        "cwd": "~/attila/301/VLLP/buildDNN.SI.1/torchTest",
-        "output": "ctm/{{acwt}}/attila_decode.log"
-      },
-      {
-        "command": "attila score.py --langID=301.tune {{absloc}}/ctm/{{acwt}}/",
-        "cwd": "~/attila/301/VLLP/scoring_",
-        "output": "ctm/{{acwt}}/attila_score.log"
-      }
+jobs = {
+    "run": [
+      { "command": "luajit go.lua -conf {{absloc}} -device {{device}}" }
     ],
-    "scoreSome": [
-      {
-        "command": "mkdir -p ./output/{{relloc}}/ctm{{uttlim}}/{{acwt}}"
-      },
-      {
-        "command": "attila test.py -L {{relloc}} -w {{acwt}} -M {{uttlim}}",
-        "cwd": "~/attila/301/VLLP/buildDNN.SI.1/torchTest",
-        "output": "ctm{{uttlim}}/{{acwt}}/attila_decode.log"
-      },
-      {
-        "command": "attila score.py --langID=301.tune {{absloc}}/ctm{{uttlim}}/{{acwt}}/",
-        "cwd": "~/attila/301/VLLP/scoring_",
-        "output": "ctm{{uttlim}}/{{acwt}}/attila_score.log"
-      }
-    ]
+    "runSilent": [
+      { "command": "luajit go.lua -conf {{absloc}} -device {{device|default('1')}} -noprogress",
+        "output": "go.log" }
+    ],
+}
+resources = {
+    "local" : {
+      "scheduler": "local"
+    }
 }

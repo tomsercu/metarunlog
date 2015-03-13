@@ -18,6 +18,8 @@ from shutil import copy as shcopy
 from jinja2 import Template, Environment, meta
 import itertools
 import getpass
+from jobs import Job
+import schedulers
 
 DEBUG = True
 
@@ -37,7 +39,9 @@ class BatchException(Exception):
     pass
 class HpcException(Exception):
     pass
-class NoSuchCustomCommandException(Exception):
+class NoSuchJobException(Exception):
+    pass
+class SchedulerException(Exception):
     pass
 
 def get_commit():
@@ -115,15 +119,15 @@ class MetaRunLog:
         self.expList = [int(x) for x in self.expDirList]
         self.lastExpId = None if not self.expList else self.expList[-1]
         self.hpcPass = None
-        # parse the custom commands into templates and extract the optional arguments for argparse
+        # parse the job commands into templates and extract the optional arguments for argparse
         self.jEnv = Environment()
-        self.customTemplates = {customName:[]  for customName in cfg.custom.keys()}
-        self.customOptVars = {customName:set() for customName in cfg.custom.keys()}
-        for customName, cList in cfg.custom.iteritems():
+        self.jobTemplates = {jobName:[]  for jobName in cfg.jobs.keys()}
+        self.jobOptVars = {jobName:set() for jobName in cfg.jobs.keys()}
+        for jobName, cList in cfg.jobs.iteritems():
             for cmdEnv in cList:
-                self.customTemplates[customName].append({envKey: self.jEnv.from_string(cmd) for envKey, cmd in cmdEnv.iteritems()})
+                self.jobTemplates[jobName].append({envKey: self.jEnv.from_string(cmd) for envKey, cmd in cmdEnv.iteritems()})
                 for cmd in cmdEnv.values():
-                    self.customOptVars[customName].update(meta.find_undeclared_variables(self.jEnv.parse(cmd)))
+                    self.jobOptVars[jobName].update(meta.find_undeclared_variables(self.jEnv.parse(cmd)))
 
     def _loadBasedirConfig(self):
         try:
@@ -289,31 +293,40 @@ class MetaRunLog:
             cmd = "rsync -aP {} {}:{}/ {}/".format(excludes, cfg.hpcServer, join(remoteExpDir,loc), join(expDir,loc))
             self._hpc(cmd, ssh=False)
 
-    def custom(self, args):
+    def makeJobs(self, args):
         expId, expDir, expConfig = self._loadExp(args.expId)
-        customName = args.customName
-        cmdTemplates = self.customTemplates[customName]
+        jobList = []
+        jobName = args.jobName
+        jobTemplate = self.jobTemplates[jobName]
         runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
-        originalCwd = os.getcwd() # self.basedir if ran through ./mrl
         cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
         cmdParams.update(expConfig)
         cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
-        # Render & run the commands for all experiments
+        # Make jobs
         for relloc in runLocs:
             absloc = join(self.outdir, relloc)
-            print "{} for location {}".format(customName, relloc)
+            print "{} for location {}".format(jobName, relloc)
             # Make location cmdParams
             cmdParams.update({'relloc': relloc, 'absloc': absloc})
-            # Execute commands in their environment
-            for cmdEnvTemplate in cmdTemplates:
-                cmdEnv = {k:tmpl.render(cmdParams) for k,tmpl in cmdEnvTemplate.items()}
-                if 'cwd' in cmdEnv:
-                    os.chdir(os.path.expanduser(cmdEnv['cwd']))
-                print cmdEnv['command']
-                stdout = open(join(absloc, cmdEnv['output']),"w") if 'output' in cmdEnv else None
-                subprocess.call(cmdEnv['command'], stdout=stdout, shell=True)
-                if 'cwd' in cmdEnv:
-                    os.chdir(originalCwd)
+            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
+
+    def runJobs(self, args):
+        expId, expDir, expConfig = self._loadExp(args.expId)
+        # makeJobs
+        jobList = self.makeJobs(args)
+        # Make scheduler
+        resource = cfg.resources[args.resource]
+        schedType = 
+        schedClass = getattr(schedulers, args.scheduler+"Scheduler")
+        sched = schedClass(expDir, jobList, 
+        # start scheduler
+        try:
+            sched.main()
+        except KeyboardInterrupt as e:
+            # catch keyboardinterrupt and kill all jobs
+            sched.terminate() # send SIGTERM
+            sleep(5)
+            del sched # destructor sends KILL to all jobs
 
     def analyze(self, args):
         import pandas as pd
@@ -578,18 +591,17 @@ def main():
     parser_hpcFetch.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
     parser_hpcFetch.add_argument('-data', help='Fetch hpc output data.', action='store_const', const=True)
     parser_hpcFetch.set_defaults(mode='hpcFetch')
-    # custom
-    custom_parsers = []
-    for customName, commandList in cfg.custom.iteritems():
-        optVars = mrlState.customOptVars[customName]
-        parser_custom = subparsers.add_parser(customName, help = 'custom cmd {} from your .mrl.cfg file'.format(customName))
-        parser_custom.add_argument('expId', help='experiment ID', default='last', nargs='?')
-        parser_custom.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+    # job
+    for jobName, commandList in cfg.jobs.iteritems():
+        optVars = mrlState.jobOptVars[jobName]
+        parser_job = subparsers.add_parser(jobName, help = 'job cmd {} from your .mrl.cfg file'.format(jobName))
+        parser_job.add_argument('expId', help='experiment ID', default='last', nargs='?')
+        parser_job.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+        parser_job.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
         for varName in optVars:
-            parser_custom.add_argument('-'+varName)
-        parser_custom.set_defaults(mode='custom')
-        parser_custom.set_defaults(customName=customName)
-        custom_parsers.append(parser_custom)
+            parser_job.add_argument('-'+varName)
+        parser_job.set_defaults(mode='runJobs')
+        parser_job.set_defaults(jobName=jobName)
     # analyze
     parser_Analyze = subparsers.add_parser('analyze', help = 'Analyze expId by running the functions from analyze module, specified in .mrl.cfg')
     parser_Analyze.add_argument('expId', help='experiment ID', default='last', nargs='?')
@@ -604,7 +616,7 @@ def main():
             InvalidExpIdException,\
             BatchException,\
             HpcException,
-            NoSuchCustomCommandException) as e:
+            NoSuchJobException) as e:
         print(e)
     except Exception as e:
         print "Unchecked exception"
