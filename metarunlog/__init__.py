@@ -316,9 +316,9 @@ class MetaRunLog:
         jobList = self.makeJobs(args)
         # Make scheduler
         resource = cfg.resources[args.resource]
-        schedType = 
-        schedClass = getattr(schedulers, args.scheduler+"Scheduler")
-        sched = schedClass(expDir, jobList, 
+        schedType = resource['scheduler']
+        schedClass = getattr(schedulers, schedType+"Scheduler")
+        sched = schedClass(expDir, jobList, args.resource, resource)
         # start scheduler
         try:
             sched.main()

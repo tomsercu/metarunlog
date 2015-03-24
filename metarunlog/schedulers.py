@@ -5,16 +5,21 @@
 
 import os
 from os.path import isdir, isfile, join, relpath, expanduser
+import sys
 import time
+from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 
 class AbstractScheduler:
     def __init__(self, expDir, jobList, resourceName, resourceProp):
-        self.expDir = expDir
-        self.jobList= jobList
+        self.expDir  = expDir
+        self.jobList = jobList
+        self.nextJobIx = 0
         self.resourceName = resourceName
         self.resourceProp = resourceProp
         self.sleepInterval = 5
         # Check if jobs already running
+        # TODO make this a checkpoint for resuming an interrupted scheduler session, given a policy on resuming
+        # interrupted job (for example: jobs dict defines "run": [...] and runResume: [...])
         if isfile(join(self.expDir, '.mrl.running')):
             raise SchedulerException("Lockfile exists: {}. Clear up situation first and remove lockfile."\
                     .format(join(self.expDir, '.mrl.running')))
@@ -22,20 +27,22 @@ class AbstractScheduler:
             open(join(self.expDir, '.mrl.running'),"w").close()
 
     def main(self):
-        while not all(job.finished for job in self.jobList):
+        while not all(job.isFinished() for job in self.jobList):
             resourceAvail = self.nextAvailableResource()
-            if not all(self.started for job in self.jobList) and resourceAvail:
-                self.startNextJob(resourceAvail)
+            if resourceAvail and not all(job.isStarted() for job in self.jobList):
+                nextJob = self.jobList[self.nextJobIx]
+                self.startJob(nextJob, resourceAvail)
+                nextJob += 1
             else:
                 self.printStatus()
                 self.sleep()
-            [job.updateStatus() for job in self.jobList]
         self.printStatus()
+        print('\nScheduler finished execution.')
 
     def nextAvailableResource(self):
         raise Exception("override")
 
-    def startNextJob(self, resource):
+    def startJob(self, resource):
         raise Exception("override")
 
     def sleep(self):
@@ -60,20 +67,28 @@ class AbstractScheduler:
             job.terminate()
 
     def __del__(self):
-        # kill all jobs before removing lockfile #TODO check that this actually does what its supposed to
+        # kill all jobs before removing lockfile 
+        #TODO check that this actually kills children, see http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
         del self.jobList[:]
         os.remove(join(self.expDir, '.mrl.running'))
 
 class localScheduler(AbstractScheduler):
-    def __init__(self, **args):
-        """ localScheduler has only one resource, TODO: support multiple devices OR dont set the lockfile
+    def __init__(self, expDir, jobList, resourceName, resourceProp):
+        """ localScheduler has only one resource, 
+        TODO: support multiple devices OR do not set the lockfile in runJobs
         """
-        AbstractScheduler.__init__(self)
-        self.runningProcess = None
+        AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
+        self.runningJob = None
 
     def nextAvailableResource(self):
-        if self.runningProcess.terminated:
-            self.runningProcess
+        if not self.runningJob.isRunning():
+            self.runningJob = None
+            return True
+        else:
+            return False
+
+    def startJob(self, job, resource):
+        job.startLocal()
 
 class sshScheduler:
     def __init__(self):

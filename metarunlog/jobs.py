@@ -6,6 +6,8 @@
 import subprocess
 import sys
 from jinja2 import Template, Environment
+import datetime
+from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 
 # TODO
 # structure Job similar to Popen object? -> needs startLocal() to return after launch, isAlive and terminate
@@ -23,15 +25,17 @@ class Job:
         self.cmdParams  = cmdParams
         self.expId      = expId
         self.absloc     = absloc
-        self.jobId      = jobId #relloc
+        self.jobId      = jobId # relloc will be used but doesn't have to
         # to be set later
         self.resourceType = None
         self.proc       = None
         self.outfh      = None
-        # Three status flags:
+        # Three status flags and statusUpdateTime:
         self.started    = False
         self.failed     = False
         self.finished   = False
+        self.statusUpdateTime = datetime.datetime(1990,1,1)
+        self.statusUpdateInterval = datetime.timedelta(0, 4)
 
     def renderCommands(self):
         """ Render the commands to run them in the shell.
@@ -41,9 +45,13 @@ class Job:
         for cmdTemplate in self.jobTemplate:
             self.commmandlist.append(cmdTemplate.render(self.cmdParams))
 
-    def startLocal(self, outfh):
+    def startLocal(self, outfh=None):
         self.started = True
-        self.outfh = outfh
+        if outfh:
+            self.outfh = outfh 
+        else:
+            outfn = join(self.absloc, 'output_local_{}.log').format(datetime.datetime.now().isoformat().split('.')[0])
+            self.outfh = self.open(outfn, 'w')
         outfh.write("Start job {} for expId {} at jobId {}\n".format(self.jobName, self.expId, self.jobId))
         self.renderCommands()
         shellcmd = '\n'.join(self.commandlist)
@@ -57,19 +65,45 @@ class Job:
             self.finished = True
             return
         self.resourceType = 'local'
+        self.updateStatus()
+
+    def finishLocal(self):
+        self.failed = self.proc.poll() # 0 or exit code 
+        self.outfh.close()
 
     def updateStatus(self):
-        if self.failed or self.finished:
-            return 
+        if not self.isRunning():
+            return # status wont change
+        if datetime.datetime.now() - self.statusUpdateTime < self.statusUpdateInterval:
+            return
         if self.started:
             if self.resourceType == 'local':
                 self.finished = self.proc.poll() is None
                 if self.finished:
-                    self.failed = self.proc.poll() # 0 or exit code 
+                    self.finishLocal()
             elif self.resourceType == 'ssh':
                 return False #TODO
             elif self.resourceType == 'pbs':
                 return False #TODO
+            else:
+                raise SchedulerException("Dont know that resource type: {}".format(self.resourceType))
+        self.statusUpdateTime = datetime.datetime.now()
+
+    def isStarted(self):
+        self.updateStatus()
+        return self.started
+
+    def isFinished(self):
+        self.updateStatus()
+        return self.finished
+
+    def isFailed(self):
+        self.updateStatus()
+        return self.failed
+
+    def isRunning(self):
+        self.updateStatus()
+        return self.started and not self.finished
 
     def terminate(self):
         if self.started and not self.finished:
@@ -79,7 +113,7 @@ class Job:
                 raise Exception("todo")
 
     def __del__(self):
-        if self.started:
+        if self.isRunning():
             if self.resourceType == 'local':
                 print "Kill local job {}".format(self.jobId)
                 # TODO use if needed: http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
