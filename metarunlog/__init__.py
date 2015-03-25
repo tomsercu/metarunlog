@@ -3,7 +3,8 @@
 # Author: Tom Sercu
 # Date: 2015-01-23
 
-import metarunlog.cfg as cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
+from  metarunlog import cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
+from metarunlog.exceptions import *
 import os
 import sys
 from os import listdir
@@ -22,27 +23,6 @@ from jobs import Job
 import schedulers
 
 DEBUG = True
-
-class InvalidOutDirException(Exception):
-    pass
-class NoCleanStateException(Exception):
-    pass
-class NoBasedirConfig(Exception):
-    def __init__(self, basedir, e):
-        self.basedir = basedir
-        self.orig_e = e
-    def __str__(self):
-        return "NoBasedirConfig in {} : {}".format(self.basedir, self.orig_e)
-class InvalidExpIdException(Exception):
-    pass
-class BatchException(Exception):
-    pass
-class HpcException(Exception):
-    pass
-class NoSuchJobException(Exception):
-    pass
-class SchedulerException(Exception):
-    pass
 
 def get_commit():
     cline = subprocess.check_output("git log -n1 --oneline", shell=True)
@@ -124,10 +104,9 @@ class MetaRunLog:
         self.jobTemplates = {jobName:[]  for jobName in cfg.jobs.keys()}
         self.jobOptVars = {jobName:set() for jobName in cfg.jobs.keys()}
         for jobName, cList in cfg.jobs.iteritems():
-            for cmdEnv in cList:
-                self.jobTemplates[jobName].append({envKey: self.jEnv.from_string(cmd) for envKey, cmd in cmdEnv.iteritems()})
-                for cmd in cmdEnv.values():
-                    self.jobOptVars[jobName].update(meta.find_undeclared_variables(self.jEnv.parse(cmd)))
+            for cmd in cList:
+                self.jobTemplates[jobName].append(self.jEnv.from_string(cmd))
+                self.jobOptVars[jobName].update(meta.find_undeclared_variables(self.jEnv.parse(cmd)))
 
     def _loadBasedirConfig(self):
         try:
@@ -301,14 +280,16 @@ class MetaRunLog:
         runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
         cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
         cmdParams.update(expConfig)
+        cmdParams.update({k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}) # access to cfg params
         cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
         # Make jobs
         for relloc in runLocs:
             absloc = join(self.outdir, relloc)
-            print "{} for location {}".format(jobName, relloc)
+            print "Make job '{}' for location {}".format(jobName, relloc)
             # Make location cmdParams
             cmdParams.update({'relloc': relloc, 'absloc': absloc})
             jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
+        return jobList
 
     def runJobs(self, args):
         expId, expDir, expConfig = self._loadExp(args.expId)
@@ -324,9 +305,11 @@ class MetaRunLog:
             sched.main()
         except KeyboardInterrupt as e:
             # catch keyboardinterrupt and kill all jobs
-            sched.terminate() # send SIGTERM
-            sleep(5)
-            del sched # destructor sends KILL to all jobs
+            print ("caught kbinterrupt")
+            raise
+            #sched.terminate() # send SIGTERM
+            #sleep(5)
+            #del sched # destructor sends KILL to all jobs
 
     def analyze(self, args):
         import pandas as pd

@@ -3,11 +3,12 @@
 # Author: Tom Sercu
 # Date: 2015-03-12
 
+from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
+from metarunlog.exceptions import *
 import os
 from os.path import isdir, isfile, join, relpath, expanduser
 import sys
 import time
-from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 
 class AbstractScheduler:
     def __init__(self, expDir, jobList, resourceName, resourceProp):
@@ -31,8 +32,9 @@ class AbstractScheduler:
             resourceAvail = self.nextAvailableResource()
             if resourceAvail and not all(job.isStarted() for job in self.jobList):
                 nextJob = self.jobList[self.nextJobIx]
+                print('Start job {} {} on resource {}'.format(nextJob.jobName, nextJob.jobId, resourceAvail))
                 self.startJob(nextJob, resourceAvail)
-                nextJob += 1
+                self.nextJobIx += 1
             else:
                 self.printStatus()
                 self.sleep()
@@ -50,7 +52,7 @@ class AbstractScheduler:
 
     def printStatus(self):
         for job in self.jobList:
-            msg = "{} on {} - expId {} jobId {}: ".format(job.jobName, self.resourceName, job.expId, job.jobId)
+            msg = "{} {} ({}): ".format(job.jobName, job.jobId, self.resourceName)
             if job.started:
                 if job.failed:
                     msg += 'FAILED: ' + str(job.failed)
@@ -61,16 +63,17 @@ class AbstractScheduler:
             else:
                 msg += 'NOT STARTED'
             print(msg)
+        print('---')
 
     def terminate():
         for job in self.jobList:
             job.terminate()
 
-    def __del__(self):
-        # kill all jobs before removing lockfile 
-        #TODO check that this actually kills children, see http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-        del self.jobList[:]
-        os.remove(join(self.expDir, '.mrl.running'))
+    #def __del__(self):
+        ## kill all jobs before removing lockfile 
+        ##TODO check that this actually kills children, see http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+        #del self.jobList[:]
+        #os.remove(join(self.expDir, '.mrl.running'))
 
 class localScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
@@ -81,14 +84,15 @@ class localScheduler(AbstractScheduler):
         self.runningJob = None
 
     def nextAvailableResource(self):
-        if not self.runningJob.isRunning():
+        if not self.runningJob or not self.runningJob.isRunning():
             self.runningJob = None
-            return True
+            return 'local'
         else:
-            return False
+            return ''
 
     def startJob(self, job, resource):
         job.startLocal()
+        self.runningJob = job
 
 class sshScheduler:
     def __init__(self):

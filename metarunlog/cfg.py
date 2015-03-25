@@ -34,13 +34,21 @@ analysis_subexp = {
 }
 analysis_webdir = '/web/ts2387/lo/'
 jobs = {
-    "run": [
-      { "command": "luajit go.lua -conf {{absloc}} -device {{device}}" }
+    "go": [
+      "cd {{absloc}}",
+      "(git clone {{giturl}} code || true)",
+      "cd code",
+      "git checkout {{gitHash}}",
+      "luajit go.lua -conf {{absloc}}/conf.lua -device {{device|default('1')}} -noprogress"
     ],
-    "runSilent": [
-      { "command": "luajit go.lua -conf {{absloc}} -device {{device|default('1')}} -noprogress",
-        "output": "go.log" }
-    ],
+    "attscore": [
+      "mkdir -p {{absloc}}/ctm/{{acwt|default('0.09')}}",
+      "cd attscore",
+      "cd ~/attila/301/VLLP/buildDNN.SI.1/torchTest",
+      "attila attscore/att.py -L {{relloc}} -w {{acwt|default('0.09')}}",
+      "cd ~/attila/301/VLLP/scoring_",
+      "attila score.py --langID=301.tune {{absloc}}/ctm/{{acwt|default('0.09')}}/"
+    ] 
 }
 resources = {
     "local" : {

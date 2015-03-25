@@ -64,15 +64,10 @@ Jobs are parametrized in config with
 ``` python
 custom = {"commandName": [list of consecutive commands to be executed], ...}
 ```
-with each command in the list of commands a dictionary (only "command" is required).
-``` 
-command = {
-   "cwd": "will chdir here first",
-   "command": "will be executed with subprocess, shell=True",
-   "output": "will redirect output to this file inside the expDir (regardless of cwd)",
-   "maxtime": time before killing the job, walltime for pbs.
-}
-```
+
+The commands are chained with && so as soon as one fails everything will fail and return failcode to 
+the python subprocess returncode.
+If you want a command to be failable, write it as (cmd || true) so it doesnt interrupted the chain.
 
 ## Analysis
 (mrl analyze expId [anadir]) does the following on a finished batch experiment:
