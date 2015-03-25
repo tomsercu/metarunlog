@@ -5,8 +5,11 @@
 
 from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 from metarunlog.exceptions import *
+from metarunlog.util import nowstring
 import subprocess
 import sys
+import os
+import signal
 from os.path import isdir, isfile, join, relpath, expanduser
 from jinja2 import Template, Environment
 import datetime
@@ -52,7 +55,7 @@ class Job:
         if outfh:
             self.outfh = outfh 
         else:
-            outfn = join(self.absloc, 'output_local_{}.log').format(datetime.datetime.now().isoformat().split('.')[0])
+            outfn = join(self.absloc, '{}_local_{}.log').format(self.jobName, nowstring(sec=False))
             self.outfh = open(outfn, 'w')
         self.outfh.write("Start job {} for expId {} at jobId {}\n".format(self.jobName, self.expId, self.jobId))
         self.renderCommands()
@@ -60,7 +63,11 @@ class Job:
         self.outfh.write('Full shell command:\n{}\n=============\n'.format(shellcmd))
         self.outfh.flush() # get this out before subproc writes into it
         try:
-            self.proc = subprocess.Popen(shellcmd, stdout=self.outfh, stderr=subprocess.STDOUT, shell=True)
+            self.proc = subprocess.Popen(shellcmd,
+                                         stdout=self.outfh,
+                                         stderr=subprocess.STDOUT,
+                                         shell=True,
+                                         preexec_fn=os.setsid)
             #TODO get error code from subprocesses from shell
         except OSError as e:
             self.outfh.write("Exception in subprocess {} {} : {}\n".format(self.jobName, self.expId, self.jobId))
@@ -112,15 +119,17 @@ class Job:
     def terminate(self):
         if self.started and not self.finished:
             if self.resourceType == 'local':
-                self.proc.terminate()
+                #self.proc.terminate()
+                print "local job {} - send SIGTERM to proc group {}".format(self.jobId, self.proc.pid)
+                os.killpg(self.proc.pid, signal.SIGTERM)
             else:
                 raise Exception("todo")
 
-    #def __del__(self):
-        #if self.isRunning():
-            #if self.resourceType == 'local':
-                #print "Kill local job {}".format(self.jobId)
-                ## TODO use if needed: http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
+    def __del__(self):
+        if self.isRunning():
+            if self.resourceType == 'local':
+                print "local job {} - send SIGKILL to proc group {}".format(self.jobId, self.proc.pid)
+                os.killpg(self.proc.pid, signal.SIGKILL)
                 #self.proc.kill()
 
     def startSsh(self, host, device):

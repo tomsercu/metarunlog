@@ -5,6 +5,7 @@
 
 from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 from metarunlog.exceptions import *
+from metarunlog.util import nowstring
 import os
 from os.path import isdir, isfile, join, relpath, expanduser
 import sys
@@ -65,15 +66,18 @@ class AbstractScheduler:
             print(msg)
         print('---')
 
-    def terminate():
+    def terminate(self):
+        print("{} Sending SIGTERM to jobs", type(self).__name__)
         for job in self.jobList:
             job.terminate()
 
-    #def __del__(self):
-        ## kill all jobs before removing lockfile 
+    def __del__(self):
+        # kill all jobs before removing lockfile 
         ##TODO check that this actually kills children, see http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-        #del self.jobList[:]
-        #os.remove(join(self.expDir, '.mrl.running'))
+        print("{} Sending SIGKILL to remaining jobs", type(self).__name__)
+        del self.jobList[:]
+        print("{} remove .mrl.running", type(self).__name__)
+        os.remove(join(self.expDir, '.mrl.running'))
 
 class localScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
@@ -89,8 +93,10 @@ class localScheduler(AbstractScheduler):
             return 'local'
         else:
             return ''
+        #TODO have multiple devices in config file
 
     def startJob(self, job, resource):
+        assert not self.runningJob, "self.runningJob not None"
         job.startLocal()
         self.runningJob = job
 

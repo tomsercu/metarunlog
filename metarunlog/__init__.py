@@ -5,6 +5,7 @@
 
 from  metarunlog import cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
 from metarunlog.exceptions import *
+from metarunlog.util import nowstring
 import os
 import sys
 from os import listdir
@@ -132,7 +133,7 @@ class MetaRunLog:
             raise NoCleanStateException("new: uncommited files -- please commit changes first\n" + uncommited)
         expConfig['gitHash'], expConfig['gitDescription'] = get_commit()
         if not gitclean and uncommited: expConfig['gitHash'] += '-sloppy'
-        expConfig['timestamp'] = datetime.datetime.now().isoformat().split('.')[0]
+        expConfig['timestamp'] = nowstring()
         expConfig['user'] = getpass.getuser()
         expConfig['description'] = args.description if args.description else ""
         # make dir and symlink
@@ -282,6 +283,7 @@ class MetaRunLog:
         cmdParams.update(expConfig)
         cmdParams.update({k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}) # access to cfg params
         cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
+        #note optional parameters override everything except relloc and absloc
         # Make jobs
         for relloc in runLocs:
             absloc = join(self.outdir, relloc)
@@ -305,11 +307,10 @@ class MetaRunLog:
             sched.main()
         except KeyboardInterrupt as e:
             # catch keyboardinterrupt and kill all jobs
-            print ("caught kbinterrupt")
-            raise
-            #sched.terminate() # send SIGTERM
-            #sleep(5)
-            #del sched # destructor sends KILL to all jobs
+            print ("mrl caught KeyboardInterrupt, terminating running jobs")
+            sched.terminate() # send SIGTERM
+            sched.sleep()
+            del sched # destructor sends SIGKILL to all jobs
 
     def analyze(self, args):
         import pandas as pd
