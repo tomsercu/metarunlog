@@ -82,6 +82,22 @@ class Job:
         self.failed = self.proc.poll() # 0 or exit code 
         self.outfh.close()
 
+    def startSsh(self, host, device, copyFiles):
+        """
+        ssh submit this job. Use some way of ssh polling to see if job is still alive and redirect its output?
+        """
+        raise Exception("todo")
+
+    def finishSsh(self, host, device):
+        pass
+
+    def startPbs(self, host, qsubparams):
+        """ 
+        qsub to hpc. but also poll if job is done etc. See spearmint for inspiration.
+        also todo: deal with copying files over
+        """
+        raise Exception("todo")
+
     def updateStatus(self):
         if (not self.started) or self.finished:
             return # status wont change
@@ -131,16 +147,6 @@ class Job:
                 print "local job {} - send SIGKILL to proc group {}".format(self.jobId, self.proc.pid)
                 os.killpg(self.proc.pid, signal.SIGKILL)
                 #self.proc.kill()
-
-    def startSsh(self, host, device):
-        """ 
-        ssh submit this job. Use some way of ssh polling to see if job is still alive and redirect its output?
-        """
-        raise Exception("todo")
-
-    def startPbs(self, host, qsubparams):
-        """ 
-        qsub to hpc. but also poll if job is done etc. See spearmint for inspiration.
-        also todo: deal with copying files over
-        """
-        raise Exception("todo")
+    def __str__(self):
+        return "{} {} ({}): ".\
+                format(self.jobName, self.jobId, self.resourceType if self.resourceType else 'unscheduled')

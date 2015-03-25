@@ -31,9 +31,9 @@ class AbstractScheduler:
     def main(self):
         while not all(job.isFinished() for job in self.jobList):
             resourceAvail = self.nextAvailableResource()
-            if resourceAvail and not all(job.isStarted() for job in self.jobList):
+            if resourceAvail is not None and not all(job.isStarted() for job in self.jobList):
                 nextJob = self.jobList[self.nextJobIx]
-                print('Start job {} {} on resource {}'.format(nextJob.jobName, nextJob.jobId, resourceAvail))
+                print('Start job {} on resource {}'.format(str(nextJob), self.fmtResource(resourceAvail)))
                 self.startJob(nextJob, resourceAvail)
                 self.nextJobIx += 1
             else:
@@ -43,9 +43,16 @@ class AbstractScheduler:
         print('\nScheduler finished execution.')
 
     def nextAvailableResource(self):
+        """ 
+        returns the next available resource in a format understood by startJob,
+        or the None object if no resource available.
+        """
         raise Exception("override")
 
     def startJob(self, resource):
+        raise Exception("override")
+
+    def fmtResource(self, resource):
         raise Exception("override")
 
     def sleep(self):
@@ -53,7 +60,7 @@ class AbstractScheduler:
 
     def printStatus(self):
         for job in self.jobList:
-            msg = "{} {} ({}): ".format(job.jobName, job.jobId, self.resourceName)
+            msg = str(job)
             if job.started:
                 if job.failed:
                     msg += 'FAILED: ' + str(job.failed)
@@ -88,11 +95,15 @@ class localScheduler(AbstractScheduler):
         self.runningJob = None
 
     def nextAvailableResource(self):
+        """ 
+        returns 'local' if it is available, 
+        or the None object if a job is running.
+        """
         if not self.runningJob or not self.runningJob.isRunning():
             self.runningJob = None
             return 'local'
         else:
-            return ''
+            return None
         #TODO have multiple devices in config file
 
     def startJob(self, job, resource):
@@ -100,9 +111,35 @@ class localScheduler(AbstractScheduler):
         job.startLocal()
         self.runningJob = job
 
+    def fmtResource(self, resource):
+        return resource
+
 class sshScheduler:
-    def __init__(self):
-        pass
+    def __init__(self, expDir, jobList, resourceName, resourceProp):
+        AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
+        self.hosts = [(host, int(dev)) for host,dev in self.resourceProp.hosts]
+        self.runningJobs = [None for slot in self.hosts]
+
+    def nextAvailableResource(self):
+        """
+        returns index into self.hosts if a host is available,
+        or the None object if all hosts are running a job.
+        """
+        try:
+            return self.runningJobs.index(None)
+        except ValueError:
+            return None
+
+    def startJob(self, job, resource):
+        assert self.runningJobs[resource] is None, "Host {} has job {} running".\
+                format(self.fmtResource(resource), str(self.runningJobs[resource]))
+        host, device = self.hosts[resource]
+        copyFiles = self.resourceProp['copyFiles']
+        job.startSsh(host, device, copyFiles)
+        self.runningJobs[resource] = job
+
+    def fmtResource(self, resource):
+        return '{} [device {}]'.format(*self.hosts[resource])
 
 class pbsScheduler:
     def __init__(self):
