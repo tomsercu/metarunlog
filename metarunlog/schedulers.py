@@ -3,13 +3,13 @@
 # Author: Tom Sercu
 # Date: 2015-03-12
 
-from metarunlog import cfg #TODO are updates from __init__ also visible here? guess yes
 from metarunlog.exceptions import *
 from metarunlog.util import nowstring
 import os
 from os.path import isdir, isfile, join, relpath, expanduser
 import sys
 import time
+import getpass
 
 class AbstractScheduler:
     def __init__(self, expDir, jobList, resourceName, resourceProp):
@@ -18,7 +18,9 @@ class AbstractScheduler:
         self.nextJobIx = 0
         self.resourceName = resourceName
         self.resourceProp = resourceProp
-        self.sleepInterval = 5
+        self.sleepInterval = resourceProp.get('sleepInterval', 5)
+        self.sshPass = getpass.getpass("Password for {}: ".format(self.resourceName))\
+                if resourceProp.get('askPass', False) else None
         # Check if jobs already running
         # TODO make this a checkpoint for resuming an interrupted scheduler session, given a policy on resuming
         # interrupted job (for example: jobs dict defines "run": [...] and runResume: [...])
@@ -74,16 +76,16 @@ class AbstractScheduler:
         print('---')
 
     def terminate(self):
-        print("{} Sending SIGTERM to jobs", type(self).__name__)
+        print("{} Asking running jobs to terminate.".format(self.__class__.__name__))
         for job in self.jobList:
             job.terminate()
 
     def __del__(self):
         # kill all jobs before removing lockfile 
         ##TODO check that this actually kills children, see http://stackoverflow.com/questions/4789837/how-to-terminate-a-python-subprocess-launched-with-shell-true
-        print("{} Sending SIGKILL to remaining jobs", type(self).__name__)
+        print("{} Sending SIGKILL to remaining jobs".format(self.__class__.__name__))
         del self.jobList[:]
-        print("{} remove .mrl.running", type(self).__name__)
+        print("{} remove .mrl.running".format(self.__class__.__name__))
         os.remove(join(self.expDir, '.mrl.running'))
 
 class localScheduler(AbstractScheduler):
@@ -114,10 +116,11 @@ class localScheduler(AbstractScheduler):
     def fmtResource(self, resource):
         return resource
 
-class sshScheduler:
+class sshScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
         AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
-        self.hosts = [(host, int(dev)) for host,dev in self.resourceProp.hosts]
+        #import pdb; pdb.set_trace()
+        self.hosts = [(host, int(dev)) for host,dev in self.resourceProp['hosts']]
         self.runningJobs = [None for slot in self.hosts]
 
     def nextAvailableResource(self):
@@ -125,21 +128,23 @@ class sshScheduler:
         returns index into self.hosts if a host is available,
         or the None object if all hosts are running a job.
         """
+        # clear finished jobs from runningJobs
+        self.runningJobs = [job if (job and job.isRunning()) else None for job in self.runningJobs]
         try:
             return self.runningJobs.index(None)
         except ValueError:
             return None
 
-    def startJob(self, job, resource):
-        assert self.runningJobs[resource] is None, "Host {} has job {} running".\
-                format(self.fmtResource(resource), str(self.runningJobs[resource]))
-        host, device = self.hosts[resource]
+    def startJob(self, job, resourceIx):
+        assert self.runningJobs[resourceIx] is None, "Host {} has job {} running".\
+                format(self.fmtResource(resourceIx), str(self.runningJobs[resourceIx]))
+        host, device = self.hosts[resourceIx]
         copyFiles = self.resourceProp['copyFiles']
-        job.startSsh(host, device, copyFiles)
-        self.runningJobs[resource] = job
+        job.startSsh(host, device, self.sshPass, copyFiles)
+        self.runningJobs[resourceIx] = job
 
-    def fmtResource(self, resource):
-        return '{} [device {}]'.format(*self.hosts[resource])
+    def fmtResource(self, resourceIx):
+        return '{} [device {}]'.format(*self.hosts[resourceIx])
 
 class pbsScheduler:
     def __init__(self):
