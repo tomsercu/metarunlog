@@ -93,7 +93,7 @@ class Job:
         self.failed = self.proc.poll() # 0 or exit code 
         self.outfh.close()
 
-    def scpFiles(self, v=True):
+    def copyFilesToRemote(self, v=True):
         """
         Scp files in self.absloc to self.sshHost with self.sshPass.
         This assumes exactly mirrored remote directory structure. Everything assumes this.
@@ -134,7 +134,8 @@ class Job:
         self.outfh.flush() # get this out before subproc writes into it
         # copy files
         try:
-            self.scpFiles()
+            if copyFiles: 
+                self.copyFilesToRemote()
         except subprocess.CalledProcessError as e:
             print "Failed to copy the files to {}, job failed.".format(self.sshHost)
             self.finished = True
@@ -153,11 +154,12 @@ class Job:
         self.qsubHeader =qsubHeader
         self.resourceType = 'pbs'
         self.resourceName = '{}[{}]'.format(host, "failed")
-        self.scriptfn = '{}_{}.q'.format(self.jobName, re.sub('[\W_]+', '_', self.jobId))
+        self.scriptfn = '{}_pbs_{}.q'.format(self.jobName, re.sub('[\W_]+', '_', self.jobId))
         self.cmdToScript(self.scriptfn)
         # copy files
         try:
-            self.scpFiles()
+            if copyFiles:
+                self.copyFilesToRemote()
         except subprocess.CalledProcessError as e:
             print "Failed to copy the files to {}, job failed.".format(self.sshHost)
             self.finished = True

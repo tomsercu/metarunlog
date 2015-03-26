@@ -21,7 +21,6 @@ from jinja2 import Template, Environment, meta
 import itertools
 import getpass
 from jobs import Job
-import schedulers
 
 DEBUG = True
 
@@ -262,6 +261,7 @@ class MetaRunLog:
         return jobList
 
     def runJobs(self, args):
+        import schedulers
         expId, expDir, expConfig = self._loadExp(args.expId)
         # makeJobs
         jobList = self.makeJobs(args)
