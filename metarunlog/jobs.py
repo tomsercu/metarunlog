@@ -4,11 +4,12 @@
 # Date: 2015-03-12
 
 from metarunlog.exceptions import *
-from metarunlog.util import nowstring
+from metarunlog.util import nowstring, sshify
 import subprocess
 import sys
 import os
 import signal
+import re
 from os.path import isdir, isfile, join, relpath, expanduser
 from jinja2 import Template, Environment
 import datetime
@@ -37,7 +38,7 @@ class Job:
         self.outfh      = None
         self.sshHost    = None
         self.sshPass    = None
-        self.qsub       = None
+        self.qsubHeader = None
         self.shellcmd   = None
         # Three status flags and statusUpdateTime:
         self.started    = False
@@ -48,9 +49,9 @@ class Job:
 
     def renderCmd(self, v=True):
         """ 
-        Render the commands to run them in the shell.
+        Render the commands in commandlist to shellcmd, to run them in the shell or over ssh.
         JIT rendering allows the scheduler to set parameters after the job has been initialized.
-        renderCmd also takes self.sshHost, self.sshPass and self.qsub into account.
+        renderCmd also takes self.sshHost, self.sshPass into account.
         """
         # always start out in mrl basedir
         self.commandlist = ['cd {}'.format(self.cmdParams['mrlBasedir'])] 
@@ -58,15 +59,21 @@ class Job:
             self.commandlist.append(cmdTemplate.render(self.cmdParams))
         self.shellcmd = ' && '.join(self.commandlist)
         # sshHost and sshPass
-        cleancmd = ''
-        if self.sshHost:
-            self.shellcmd = 'ssh {} "{}"'.format(self.sshHost, self.shellcmd)
-            if self.sshPass:
-                cleancmd = "sshpass -p '{}' {}".format('***', self.shellcmd)
-                self.shellcmd = "sshpass -p '{}' {}".format(self.sshPass, self.shellcmd)
-        # printing
-        if not cleancmd: cleancmd = self.shellcmd
-        if v: self.outfh.write('Full shell command:\n{}\n=============\n'.format(cleancmd))
+        self.shellcmd = sshify(self.shellcmd, self.sshHost, self.sshPass, self.outfh)
+
+    def cmdToScript(self, fn):
+        """ 
+        Render the commands in commandlist to a qsub script inside self.absloc and set up shellcmd to qsub it.
+        """
+        # write the script
+        with open(join(self.absloc, fn),'w') as fh:
+            for line in self.qsubHeader:
+                fh.write(line + "\n")
+            # always start out in mrl basedir
+            fh.write('\ncd {}\n'.format(self.cmdParams['mrlBasedir']))
+            for cmdTemplate in self.jobTemplate:
+                fh.write(cmdTemplate.render(self.cmdParams) + '\n')
+        os.chmod(join(self.absloc, fn), 0770)
 
     def startProc(self):
         try:
@@ -82,6 +89,21 @@ class Job:
             self.finished = True
             return
 
+    def finishProc(self):
+        self.failed = self.proc.poll() # 0 or exit code 
+        self.outfh.close()
+
+    def scpFiles(self, v=True):
+        """
+        Scp files in self.absloc to self.sshHost with self.sshPass.
+        This assumes exactly mirrored remote directory structure. Everything assumes this.
+        """
+        cmd = sshify("mkdir -p " + self.absloc, self.sshHost, self.sshPass, sys.stdout)
+        subprocess.check_output(cmd, shell=True) # raises CalledProcessError
+        cmd = "rsync -au {}/ {}:{}/".format(self.absloc, self.sshHost, self.absloc)
+        cmd = sshify(cmd, None, self.sshPass, sys.stdout)
+        subprocess.check_output(cmd, shell=True) # raises CalledProcessError
+
     def startLocal(self):
         self.started = True
         self.outfn = join(self.absloc, '{}_local_{}.log').format(self.jobName, nowstring(sec=False))
@@ -93,10 +115,6 @@ class Job:
         self.resourceType = 'local'
         self.resourceName = 'local'
         self.updateStatus()
-
-    def finishLocal(self):
-        self.failed = self.proc.poll() # 0 or exit code 
-        self.outfh.close()
 
     def startSsh(self, host, device, sshPass, copyFiles):
         """
@@ -110,38 +128,69 @@ class Job:
         self.cmdParams['device'] = device
         self.sshHost = host
         self.sshPass = sshPass
-        self.renderCmd()
-        self.outfh.flush() # get this out before subproc writes into it
-        self.startProc()
         self.resourceType = 'ssh'
         self.resourceName = '{}[{}]'.format(host,device)
-        self.updateStatus()
+        self.renderCmd()
+        self.outfh.flush() # get this out before subproc writes into it
+        # copy files
+        try:
+            self.scpFiles()
+        except subprocess.CalledProcessError as e:
+            print "Failed to copy the files to {}, job failed.".format(self.sshHost)
+            self.finished = True
+            self.failed = e.returncode
+        else:
+            self.startProc()
+            self.updateStatus()
 
-    def finishSsh(self, host, device):
-        self.failed = self.proc.poll() # 0 or exit code 
-        self.outfh.close()
-
-    def startPbs(self, host, qsubparams):
+    def startPbs(self, host, sshPass, copyFiles, qsubHeader):
         """ 
-        qsub to hpc. but also poll if job is done etc. See spearmint for inspiration.
-        also todo: deal with copying files over
+        qsub to hpc and quit. In the future: keep polling with ssh qstat and parse output.
         """
-        raise Exception("todo")
+        self.started = True
+        self.sshHost = host
+        self.sshPass = sshPass
+        self.qsubHeader =qsubHeader
+        self.resourceType = 'pbs'
+        self.resourceName = '{}[{}]'.format(host, "failed")
+        self.scriptfn = '{}_{}.q'.format(self.jobName, re.sub('[\W_]+', '_', self.jobId))
+        self.cmdToScript(self.scriptfn)
+        # copy files
+        try:
+            self.scpFiles()
+        except subprocess.CalledProcessError as e:
+            print "Failed to copy the files to {}, job failed.".format(self.sshHost)
+            self.finished = True
+            self.failed = e.returncode
+        else:
+            #start proc and wait for its output
+            self.shellcmd = 'cd {} && qsub {}'.format(self.absloc, self.scriptfn)
+            self.shellcmd = sshify(self.shellcmd, self.sshHost, self.sshPass, sys.stdout)
+            self.outfh = subprocess.PIPE
+            self.startProc()
+            stdout, stderr_empty = self.proc.communicate()
+            self.finished = True
+            self.failed = self.proc.poll() # return code
+            if self.failed:
+                print "qsubbing failed: {}".format(stdout)
+            else:
+                qsubid = stdout.replace('\n','')
+                self.resourceName = '{}[{}]'.format(host, qsubid)
 
     def updateStatus(self):
         if (not self.started) or self.finished:
             return # status wont change
         if datetime.datetime.now() - self.statusUpdateTime < self.statusUpdateInterval:
             return
-        if self.started:
-            if self.resourceType == 'local' or self.resourceType == 'ssh':
-                self.finished = (self.proc.poll() is not None)
-                if self.finished:
-                    self.finishLocal()
-            elif self.resourceType == 'pbs':
-                return False #TODO
-            else:
-                raise SchedulerException("Dont know that resource type: {}".format(self.resourceType))
+        # regular update
+        if self.resourceType == 'local' or self.resourceType == 'ssh':
+            self.finished = (self.proc.poll() is not None)
+            if self.finished:
+                self.finishProc()
+        elif self.resourceType == 'pbs':
+            raise SchedulerException("Pbs should never be updated as it finishes right away")
+        else:
+            raise SchedulerException("Dont know that resource type: {}".format(self.resourceType))
         self.statusUpdateTime = datetime.datetime.now()
 
     def isStarted(self):

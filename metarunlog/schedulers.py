@@ -21,6 +21,7 @@ class AbstractScheduler:
         self.sleepInterval = resourceProp.get('sleepInterval', 5)
         self.sshPass = getpass.getpass("Password for {}: ".format(self.resourceName))\
                 if resourceProp.get('askPass', False) else None
+        self.copyFiles = self.resourceProp.get('copyFiles', False)
         # Check if jobs already running
         # TODO make this a checkpoint for resuming an interrupted scheduler session, given a policy on resuming
         # interrupted job (for example: jobs dict defines "run": [...] and runResume: [...])
@@ -139,13 +140,32 @@ class sshScheduler(AbstractScheduler):
         assert self.runningJobs[resourceIx] is None, "Host {} has job {} running".\
                 format(self.fmtResource(resourceIx), str(self.runningJobs[resourceIx]))
         host, device = self.hosts[resourceIx]
-        copyFiles = self.resourceProp['copyFiles']
-        job.startSsh(host, device, self.sshPass, copyFiles)
+        job.startSsh(host, device, self.sshPass, self.copyFiles)
         self.runningJobs[resourceIx] = job
 
     def fmtResource(self, resourceIx):
         return '{} [device {}]'.format(*self.hosts[resourceIx])
 
-class pbsScheduler:
-    def __init__(self):
+class pbsScheduler(AbstractScheduler):
+    """ Note, pbsScheduler and job.startPbs() is not implemented for monitoring yet.
+    It just qsubs all the jobs, waits for the qsub proc to finish,
+    and finishes without sending any sigint or sigkills.
+    """
+    def __init__(self, expDir, jobList, resourceName, resourceProp):
+        AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
+        self.host = self.resourceProp['host']
+        # TODO maxConcurrent with pbs monitoring
+
+    def nextAvailableResource(self):
+        return self.resourceName # just submit all of 'em
+
+    def startJob(self, job, resource):
+        job.startPbs(self.host, self.sshPass, self.copyFiles, self.resourceProp.get('qsubHeader', []))
+
+    def fmtResource(self, resource):
+        return resource
+    def terminate(self):
         pass
+    def __del__(self):
+        print("{} remove .mrl.running".format(self.__class__.__name__))
+        os.remove(join(self.expDir, '.mrl.running'))
