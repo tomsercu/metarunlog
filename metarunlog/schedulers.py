@@ -33,6 +33,7 @@ class AbstractScheduler:
 
     def main(self):
         while not all(job.isFinished() for job in self.jobList):
+            finishedJobs  = self.popFinishedJobs()
             resourceAvail = self.nextAvailableResource()
             if resourceAvail is not None and not all(job.isStarted() for job in self.jobList):
                 nextJob = self.jobList[self.nextJobIx]
@@ -44,6 +45,9 @@ class AbstractScheduler:
                 self.sleep()
         self.printStatus()
         print('\nScheduler finished execution.')
+
+    def popFinishedJobs(self):
+        raise Exception("override")
 
     def nextAvailableResource(self):
         """ 
@@ -97,16 +101,20 @@ class localScheduler(AbstractScheduler):
         AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
         self.runningJob = None
 
+    def popFinishedJobs(self):
+        if self.runningJob and not self.runningJob.isRunning():
+            finished = self.runningJob
+            self.runningJob = None
+            return [finished]
+        else:
+            return []
+
     def nextAvailableResource(self):
         """ 
         returns 'local' if it is available, 
         or the None object if a job is running.
         """
-        if not self.runningJob or not self.runningJob.isRunning():
-            self.runningJob = None
-            return 'local'
-        else:
-            return None
+        return 'local' if not self.runningJob else None
         #TODO have multiple devices in config file
 
     def startJob(self, job, resource):
@@ -120,17 +128,19 @@ class localScheduler(AbstractScheduler):
 class sshScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
         AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
-        #import pdb; pdb.set_trace()
         self.hosts = [(host, int(dev)) for host,dev in self.resourceProp['hosts']]
         self.runningJobs = [None for slot in self.hosts]
 
+    def popFinishedJobs(self):
+        finished         = [job for job in self.runningJobs if (job and not job.isRunning())]
+        self.runningJobs = [job if (job and job.isRunning()) else None for job in self.runningJobs]
+        return finished
+
     def nextAvailableResource(self):
         """
-        returns index into self.hosts if a host is available,
+        returns index into self.hosts of first available slot if a host is available,
         or the None object if all hosts are running a job.
         """
-        # clear finished jobs from runningJobs
-        self.runningJobs = [job if (job and job.isRunning()) else None for job in self.runningJobs]
         try:
             return self.runningJobs.index(None)
         except ValueError:
@@ -154,13 +164,20 @@ class pbsScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
         AbstractScheduler.__init__(self, expDir, jobList, resourceName, resourceProp)
         self.host = self.resourceProp['host']
+        self.runningJob = None
         # TODO maxConcurrent with pbs monitoring
+
+    def popFinishedJobs(self):
+        finished = self.runningJob # jobs finish right away
+        self.runningJob = None
+        return [finished]
 
     def nextAvailableResource(self):
         return self.resourceName # just submit all of 'em
 
     def startJob(self, job, resource):
         job.startPbs(self.host, self.sshPass, self.copyFiles, self.resourceProp.get('qsubHeader', []))
+        self.runningJob = job
 
     def fmtResource(self, resource):
         return resource
