@@ -61,27 +61,34 @@ class BatchParser:
     and generates self.output as a list of strings (that can be written to file).
     """
     def __init__(self, template):
+        self.template = template
+        self.jtmpl = Template("".join(self.template))
         grid = OrderedDict()
         params = [{}]
+        whetlab= {}
         # iterate over last lines and parse them to collect grid parameters.
         # correct formatting of mrl instructions:
         # [something] MRL:grid['key'] = [vallist]
         # where [something] is comment symbol. The space after it is essential.
-        for line in template[::-1]:
+        for line in self.template[::-1]:
             if not line.strip(): continue
             line = line.split(None, 1)[-1].split(":",1) #discard comment symbol
             if line[0] != 'MRL': break
-            exec(line[1])
+            exec(line[1]) #add to grid / params / whetlab
         # construct output params list
         keys = grid.keys()
         vals = list(itertools.product(*[grid[k] for k in keys]))
         self.params = [dict(zip(keys, v)) for v in vals]
         self.params = [dict(d1.items() + d2.items()) for d1,d2 in itertools.product(self.params, params)]
-        # render the templates
         self.output = []
-        jtmpl = Template("".join(template))
         for i, param in enumerate(self.params):
-            self.output.append((i+1, param, jtmpl.render(**param)))
+            self.output.append((i+1, param, self.renderFromParams(param)))
+        # save the whetlab hyperparams
+        self.whetlabHyperParameters = whetlab
+
+    def renderFromParams(self, params):
+        """ Render the configuration file template from given parameters. """
+        return self.jtmpl.render(**params)
 
 class MetaRunLog:
     """
@@ -180,7 +187,6 @@ class MetaRunLog:
         return ""
 
     def makebatch(self, args):
-        # resolve id
         expId, expDir, expConfig = self._loadExp(args.expId)
         # check if already expanded in batch and cancel
         oldBatchList = []
@@ -246,19 +252,22 @@ class MetaRunLog:
         jobName = args.jobName
         jobTemplate = self.jobTemplates[jobName]
         runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
+        # Make jobs
+        for relloc in runLocs:
+            print "Make job '{}' for location {}".format(jobName, relloc)
+            # Make location cmdParams
+            cmdParams = self.getCmdParams(expConfig, args, relloc)
+            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
+        return jobList
+
+    def getCmdParams(self, expConfig, args, relloc):
+        #note optional parameters override everything except relloc and absloc. And device, by startSsh or startPbs
         cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
         cmdParams.update(expConfig)
         cmdParams.update({k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}) # access to cfg params
         cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
-        #note optional parameters override everything except relloc and absloc
-        # Make jobs
-        for relloc in runLocs:
-            absloc = join(self.outdir, relloc)
-            print "Make job '{}' for location {}".format(jobName, relloc)
-            # Make location cmdParams
-            cmdParams.update({'relloc': relloc, 'absloc': absloc})
-            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
-        return jobList
+        cmdParams.update({'relloc': relloc, 'absloc': join(self.outdir, relloc)})
+        return cmdParams
 
     def runJobs(self, args):
         import schedulers
@@ -279,6 +288,74 @@ class MetaRunLog:
             sched.terminate() # send SIGTERM
             sched.sleep()
             del sched # destructor sends SIGKILL to all jobs
+
+    def whetlab(self, args):
+        #TODO refactor this mess
+        import whetlab
+        from metarunlog import mrlWhetlab
+        import schedulers
+        # get the custom-for-this-job scoreFunction and scoreName
+        jobName = cfg.whetlab['jobName']
+        scoreName = getattr(mrlWhetlab, jobName + 'ScoreName')
+        scoreFunc = getattr(mrlWhetlab, jobName + 'ScoreFunc')
+        expId, expDir, expConfig = self._loadExp(args.expId)
+        assert 'batchlist' not in expConfig, "TODO continue whetlab run"
+        expConfig['batchlist'] = []
+        # prepare the scheduler on the right resource
+        resource = cfg.resources[args.resource]
+        schedType = resource['scheduler']
+        schedClass = getattr(schedulers, schedType+"Scheduler")
+        sched = schedClass(expDir, [], args.resource, resource)
+        # load template and get hyperparameters
+        with open(join(expDir, cfg.batchTemplFile)) as fh:
+            confTemplate = BatchParser(fh.readlines())
+        hyperparameters = confTemplate.whetlabHyperParameters
+        for k,v in hyperparameters.iteritems():
+            assert ('min' in v and 'max' in v and 'type' in v), "whetlab parameter dictionary needs min, max, type. In {} : {}".format(k,v)
+        # make whetlab connection
+        scientist = whetlab.Experiment(access_token=cfg.whetlab['token'],
+                                       name='{}{}'.format(cfg.whetlab['expNamePrefix'], expId),
+                                       description=expConfig['description'],
+                                       parameters=hyperparameters,
+                                       outcome={'name':scoreName})
+        # main loop
+        # write status of all jobs in 'whetlabjobs' with score 
+        # TODO set keyboard interrupt to do final checkpoint
+        while len(expConfig['batchlist']) < cfg.whetlab['maxExperiments'] or \
+                not all(job.isFinished() for job in sched.jobList):
+            # update whetlab with finished jobs
+            finishedJobs  = sched.popFinishedJobs()
+            for job in finishedJobs:
+                job.score = scoreFunc(job.absloc)
+                scientist.update(job.params, job.score)
+            # if available resources, make and schedule next job
+            resourceAvail = sched.nextAvailableResource()
+            if resourceAvail is not None:
+                # get params from whetlab, write template, make new job, schedule it.
+                params = scientist.suggest()
+                expConfig['batchlist'].append(params)
+                subExpId = len(expConfig['batchlist'])
+                self._saveExpDotmrl(expDir, expConfig)
+                relloc = self._getRunLocations(expId, str(subExpId), expConfig, relativeTo=self.outdir)[0]
+                absloc = join(self.outdir, relloc)
+                os.mkdir(absloc)
+                self._copyConfigFrom(expDir, absloc)
+                with open(join(absloc, cfg.batchTemplFile), "w") as fh:
+                    fh.write(confTemplate.renderFromParams(params))
+                cmdParams = self.getCmdParams(expConfig, args, relloc)
+                #pdb.set_trace()
+                nextJob = Job(jobName, self.jobTemplates[jobName], cmdParams, 
+                              expId, absloc, relloc)
+                nextJob.params = params
+                sched.jobList.append(nextJob)
+                print('Start job {} on resource {}'.format(str(nextJob), sched.fmtResource(resourceAvail)))
+                sched.startJob(nextJob, resourceAvail)
+                sched.printStatus()
+            else:
+                sched.printStatus()
+                sched.sleep()
+        sched.printStatus()
+        print('\nScheduler finished execution.')
 
     def analyze(self, args):
         import pandas as pd
@@ -486,7 +563,12 @@ def main():
     parser_hpcFetch.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
     parser_hpcFetch.add_argument('-data', help='Fetch hpc output data.', action='store_const', const=True)
     parser_hpcFetch.set_defaults(mode='hpcFetch')
-    # job
+    # whetlab parser
+    parser_whetlab = subparsers.add_parser('whetlab', help = 'Hyper optimize through whetlab')
+    parser_whetlab.add_argument('expId', help='experiment ID', default='last', nargs='?')
+    parser_whetlab.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
+    parser_whetlab.set_defaults(mode='whetlab')
+    # job parsers , and add optvars to whetlab
     for jobName, commandList in cfg.jobs.iteritems():
         optVars = mrlState.jobOptVars[jobName]
         parser_job = subparsers.add_parser(jobName, help = 'job cmd {} from your .mrl.cfg file'.format(jobName))
@@ -495,6 +577,8 @@ def main():
         parser_job.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
         for varName in optVars:
             parser_job.add_argument('-'+varName)
+            if jobName == cfg.whetlab['jobName']:
+                parser_whetlab.add_argument('-'+varName)
         parser_job.set_defaults(mode='runJobs')
         parser_job.set_defaults(jobName=jobName)
     # analyze

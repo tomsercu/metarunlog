@@ -53,3 +53,9 @@ resources = {
                       "module load cuda/6.5.12"]
     }
 }
+whetlab = {
+    "jobName" : "go",
+    "maxExperiments" : 1000,
+    "expNamePrefix" : "lo_conv_",
+    "token" : "fb2ff6fb-79e7-4b77-833a-64bcc8ad327e"
+}

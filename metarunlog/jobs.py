@@ -14,14 +14,6 @@ from os.path import isdir, isfile, join, relpath, expanduser
 from jinja2 import Template, Environment
 import datetime
 
-# TODO
-# structure Job similar to Popen object? -> needs startLocal() to return after launch, isAlive and terminate
-# Then the scheduler could be starting jobs in turn, avoids race conditions in 
-# but this complicates the multiple-command thing: need different start & terminate() s
-# For now: assume the jobs dont interfere with each other and we can just launch them at the same time no problem.
-
-# TODO self.resource = local / pbs / ssh
-# Then kill job in object destructor
 class Job:
     def __init__(self, jobName, jobTemplate, cmdParams, expId, absloc, jobId):
         self.jobName    = jobName
@@ -152,6 +144,7 @@ class Job:
         self.sshHost = host
         self.sshPass = sshPass
         self.qsubHeader =qsubHeader
+        self.cmdParams['device'] = 1
         self.resourceType = 'pbs'
         self.resourceName = '{}[{}]'.format(host, "failed")
         self.scriptfn = '{}_pbs_{}.q'.format(self.jobName, re.sub('[\W_]+', '_', self.jobId))
