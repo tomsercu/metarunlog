@@ -5,7 +5,7 @@
 
 from  metarunlog import cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
 from metarunlog.exceptions import *
-from metarunlog.util import nowstring, sshify
+from metarunlog.util import nowstring, sshify, _decode_dict, _decode_list
 import os
 import sys
 from os import listdir
@@ -17,6 +17,7 @@ import pdb
 import datetime
 from collections import OrderedDict
 from shutil import copy as shcopy
+import shutil
 from jinja2 import Template, Environment, meta
 import itertools
 import getpass
@@ -54,14 +55,19 @@ def initBasedir(basedir, args):
     else:
         return join(basedir, ".mrl.cfg")
 
-class BatchParser:
+class ConfParser:
     """
-    BatchParser class is initialized with batch-template (list of lines)
+    ConfParser class is initialized with batch-template (list of lines)
     including the last lines determining the values,
     and generates self.output as a list of strings (that can be written to file).
     """
-    def __init__(self, template):
-        self.template = template
+    def __init__(self, templatefile):
+        try:
+            with open(templatefile) as fh:
+                self.template = fh.readlines()
+        except jinja2.exceptions.TemplateSyntaxError as e:
+            err = "TemplateSyntaxError in your {} template file: \n {}".format(cfg.confTemplFile, str(e))
+            raise ConfParserException(err)
         self.jtmpl = Template("".join(self.template))
         grid = OrderedDict()
         params = [{}]
@@ -117,7 +123,7 @@ class MetaRunLog:
     def _loadBasedirConfig(self):
         try:
             with open(join(self.basedir, '.mrl.cfg')) as fh:
-                bconf = json.load(fh)
+                bconf = json.load(fh, object_hook=_decode_dict)
                 for k,v in bconf.iteritems():
                     setattr(cfg,k,v)
             return True
@@ -166,9 +172,11 @@ class MetaRunLog:
     def info(self, args):
         """ load info from experiment id and print it """
         expId, expDir, expConfig = self._loadExp(args.expId)
+        subExpList = self._getSubExperiments(expDir)
         items = ['',expDir,'']
         maxkeylen = max(len(k) for k,v in expConfig.iteritems())
         items += ["%*s : %.80s" % (maxkeylen,k,str(v)) for k,v in expConfig.iteritems()]
+        items += ["%*s : %.80s" % (maxkeylen, 'subExperiments', str(subExpList))]
         return "\n".join(items)
 
     def ls(self, args):
@@ -189,40 +197,29 @@ class MetaRunLog:
     def makebatch(self, args):
         expId, expDir, expConfig = self._loadExp(args.expId)
         # check if already expanded in batch and cancel
-        oldBatchList = []
-        if 'batchlist' in expConfig:
+        oldSubExpList = self._getSubExperiments(expDir)
+        if oldSubExpList:
             if args.replace:
-                oldBatchList = expConfig['batchlist']
+                # just remove all these subfolders. Drastic but it wouldn't make sense to keep results from old config files.
+                print "Will remove all old subexperiments: {}".format(oldSubExpList)
+                for subExp in oldSubExpList:
+                    shutil.rmtree(join(expDir, subExp))
             else:
-                raise BatchException("Experiment {} is already expanded into a batch of length {}".\
-                        format(expId, len(expConfig['batchlist'])))
-        # make BatchParser object
-        try:
-            with open(join(expDir, cfg.batchTemplFile)) as fh:
-                bp = BatchParser(fh.readlines())
-        except jinja2.exceptions.TemplateSyntaxError as e:
-            err = "TemplateSyntaxError in your {} template file: \n {}".format(cfg.batchTemplFile, str(e))
-            raise BatchException(err)
-        # check if BatchParser output is non-empty
-        if not bp.output:
-            err = "BatchParser output is empty, are you sure {} is a batch template?"
-            err = err.format(join(expDir, cfg.batchTemplFile))
+                raise BatchException("Experiment {} is already expanded into subexperiments: {}".\
+                        format(expId, str(oldSubExpList)))
+        # make ConfParser object
+        confP = ConfParser(join(expDir, cfg.confTemplFile))
+        # check if ConfParser output is non-empty
+        if not confP.output:
+            err = "ConfParser output is empty, are you sure {} is a batch template?"
+            err = err.format(join(expDir, cfg.confTemplFile))
             raise BatchException(err)
         # generate output directories, write the output config files
-        expConfig['batchlist'] = []
-        for i, params, fileContent in bp.output:
-            expConfig['batchlist'].append(params)
-            subExpDir = join(expDir, self._fmtBatchExp(expId=expId, subExpId=i))
-            if i > len(oldBatchList):
-                os.mkdir(subExpDir)
-            self._copyConfigFrom(expDir, subExpDir)
-            with open(join(subExpDir, cfg.batchTemplFile), "w") as fh:
-                fh.write(fileContent)
-                fh.write("\n")
-
+        for i, params, fileContent in confP.output:
+            self._newSubExp(expDir, i, {'params': params}, fileContent)
         # update the current .mrl file
-        self._saveExpDotmrl(expDir, expConfig)
-        return "Succesfully generated config files for expId {}.\n{}".format(expId,expConfig['batchlist'])
+        subExpList = self._getSubExperiments(expDir)
+        return "Generated subExperiments {} for expId {}.\n".format(subExpList, expId)
 
     def hpcFetch(self, args):
         expId, expDir, expConfig = self._loadExp(args.expId)
@@ -256,18 +253,9 @@ class MetaRunLog:
         for relloc in runLocs:
             print "Make job '{}' for location {}".format(jobName, relloc)
             # Make location cmdParams
-            cmdParams = self.getCmdParams(expConfig, args, relloc)
+            cmdParams = self._getCmdParams(expConfig, args, relloc)
             jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
         return jobList
-
-    def getCmdParams(self, expConfig, args, relloc):
-        #note optional parameters override everything except relloc and absloc. And device, by startSsh or startPbs
-        cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
-        cmdParams.update(expConfig)
-        cmdParams.update({k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}) # access to cfg params
-        cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
-        cmdParams.update({'relloc': relloc, 'absloc': join(self.outdir, relloc)})
-        return cmdParams
 
     def runJobs(self, args):
         import schedulers
@@ -299,16 +287,14 @@ class MetaRunLog:
         scoreName = getattr(mrlWhetlab, jobName + 'ScoreName')
         scoreFunc = getattr(mrlWhetlab, jobName + 'ScoreFunc')
         expId, expDir, expConfig = self._loadExp(args.expId)
-        assert 'batchlist' not in expConfig, "TODO continue whetlab run"
-        expConfig['batchlist'] = []
+        #assert 'batchlist' not in expConfig, "TODO continue whetlab run"
         # prepare the scheduler on the right resource
         resource = cfg.resources[args.resource]
         schedType = resource['scheduler']
         schedClass = getattr(schedulers, schedType+"Scheduler")
         sched = schedClass(expDir, [], args.resource, resource)
         # load template and get hyperparameters
-        with open(join(expDir, cfg.batchTemplFile)) as fh:
-            confTemplate = BatchParser(fh.readlines())
+        confTemplate = ConfParser(join(expDir, cfg.confTemplFile))
         hyperparameters = confTemplate.whetlabHyperParameters
         for k,v in hyperparameters.iteritems():
             assert ('min' in v and 'max' in v and 'type' in v), "whetlab parameter dictionary needs min, max, type. In {} : {}".format(k,v)
@@ -321,7 +307,7 @@ class MetaRunLog:
         # main loop
         # write status of all jobs in 'whetlabjobs' with score 
         # TODO set keyboard interrupt to do final checkpoint
-        while len(expConfig['batchlist']) < cfg.whetlab['maxExperiments'] or \
+        while len(self._getSubExperiments(expDir)) < cfg.whetlab['maxExperiments'] or \
                 not all(job.isFinished() for job in sched.jobList):
             # update whetlab with finished jobs
             finishedJobs  = sched.popFinishedJobs()
@@ -331,18 +317,15 @@ class MetaRunLog:
             # if available resources, make and schedule next job
             resourceAvail = sched.nextAvailableResource()
             if resourceAvail is not None:
-                # get params from whetlab, write template, make new job, schedule it.
+                # get params from whetlab, make new subExperiment, make new job, schedule it.
                 params = scientist.suggest()
-                expConfig['batchlist'].append(params)
-                subExpId = len(expConfig['batchlist'])
-                self._saveExpDotmrl(expDir, expConfig)
+                whetlabId = scientist.get_id(params)
+                subExpId = len(self._getSubExperiments(expDir)) + 1
+                confContent = confTemplate.renderFromParams(params)
+                self._newSubExp(expDir, subExpId, {'params':params, 'whetlabId':whetlabId}, confContent)
                 relloc = self._getRunLocations(expId, str(subExpId), expConfig, relativeTo=self.outdir)[0]
                 absloc = join(self.outdir, relloc)
-                os.mkdir(absloc)
-                self._copyConfigFrom(expDir, absloc)
-                with open(join(absloc, cfg.batchTemplFile), "w") as fh:
-                    fh.write(confTemplate.renderFromParams(params))
-                cmdParams = self.getCmdParams(expConfig, args, relloc)
+                cmdParams = self._getCmdParams(expConfig, args, relloc)
                 #pdb.set_trace()
                 nextJob = Job(jobName, self.jobTemplates[jobName], cmdParams, 
                               expId, absloc, relloc)
@@ -357,6 +340,10 @@ class MetaRunLog:
         sched.printStatus()
         print('\nScheduler finished execution.')
 
+    def _loadSubExp(self, subExpDir):
+        with open(join(subExpDir, '.mrl')) as fh:
+            return json.load(fh, object_hook=_decode_dict)
+
     def analyze(self, args):
         import pandas as pd
         import analyze
@@ -365,25 +352,28 @@ class MetaRunLog:
         outdir = args.outdir if args.outdir else join(expDir, 'analysis')
         if not os.path.exists(outdir): os.mkdir(outdir)
         # load the params into dataframe
-        isBatch = 'batchlist' in expConfig
-        if isBatch:
-            batchlist = expConfig['batchlist']
-            subExpIds = [self._fmtBatchExp(expId, i) for i in range(1,len(batchlist)+1)]
-            Dparams = pd.DataFrame(batchlist, index=subExpIds)
+        subExpIds = self._getSubExperiments(expDir)
+        if subExpIds:
+            try:
+                paramList = [self._loadSubExp(join(expDir,subExpId))['params'] for subExpId in subExpIds]
+            except IOError: # old style, with batchlist in expDir/.mrl
+                paramList = expConfig['batchlist']
+                subExpIds = [self._fmtSubExp(subExpId) for subExpId in range(1,len(paramList)+1)]
+            Dparams = pd.DataFrame(paramList, index=subExpIds)
         outhtml = analyze.HtmlFile()
         title = 'Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
         outhtml.addTitle(title)
         outhtml.parseNote(join(expDir,'.mrl.note'))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
-        if isBatch:
+        if subExpIds:
             # analysis_overview functions
             for funcname, xtrargs in cfg.analysis_overview.items():
                 outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
                 retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
                 outhtml.addRetVal(retval)
         # per exp functions
-        if isBatch:
+        if subExpIds:
             for subExpId in subExpIds:
                 subExpDir = join(expDir, subExpId)
                 outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
@@ -406,20 +396,32 @@ class MetaRunLog:
             subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
             print "Copied to webdir {}".format(webdir)
 
+    def _getSubExperiments(self, expDir):
+        """ returns a list of the existing subexperiments as formatted strings """
+        subexp = []
+        for subdir in listdir(expDir):
+            try:
+                if self._fmtSubExp(int(subdir)) == subdir:
+                    subexp.append(str(subdir))
+            except ValueError:
+                pass
+        return subexp
+
     def _getRunLocations(self, expId, subExpId, expConfig, relativeTo=''):
-        if 'batchlist' in expConfig:
+        expDir = self._getExpDir(expId)
+        subExpList = self._getSubExperiments(expDir)
+        if subExpList:
             if subExpId == 'all':
-                locs = [self._fmtBatchExp(expId, i) for i in range(1,len(expConfig['batchlist'])+1)]
+                locs = subExpList
             elif subExpId.isdigit():
-                if int(subExpId) > len(expConfig['batchlist']):
-                    raise SubExpIdException("subExpId {} out of range (batch size {} in expConfig)".format(subExpId,len(expConfig['batchlist'])))
-                locs = [self._fmtBatchExp(expId, int(subExpId)), ]
+                if self._fmtSubExp(int(subExpId)) not in subExpList:
+                    raise SubExpIdException("subExpId {} out of range (batch size {} in expConfig)".format(subExpId,len(subExpList)))
+                locs = [self._fmtSubExp(int(subExpId)), ]
             else:
-                # TODO list of subexpids can be handy
+                # TODO list of subexpids? can be handy
                 raise SubExpIdException("Don't understand subExpId {}.".format(subExpId))
         else:
             locs = ['']
-        expDir = self._getExpDir(expId)
         if relativeTo != expDir:
             locs = [join(expDir, loc) for loc in locs]
             if relativeTo:
@@ -430,8 +432,8 @@ class MetaRunLog:
         # TODO change fmtSingleExp to fetch date from a list initialized in init, then fill in that date here.
         return cfg.singleExpFormat.format(expId=expId)
 
-    def _fmtBatchExp(self, expId, subExpId):
-        return cfg.batchExpFormat.format(expId=expId, subExpId=subExpId)
+    def _fmtSubExp(self, subExpId):
+        return cfg.subExpFormat.format(subExpId=subExpId)
 
     def _relpathUser(self, path):
         return '~/' + relpath(path, expanduser('~'))
@@ -439,6 +441,18 @@ class MetaRunLog:
     def _copyConfigFrom(self, src, dst):
         for cfn in cfg.copyFiles:
             shcopy(join(src,cfn), join(dst, cfn))
+
+    def _getCmdParams(self, expConfig, args, relloc):
+        """
+        Make the dictionary that is needed to render a job template into actual commands.
+        note optional parameters override everything except relloc and absloc. And device, by startSsh or startPbs
+        """
+        cmdParams = {'mrlOutdir': self.outdir, 'mrlBasedir': self.basedir}
+        cmdParams.update(expConfig)
+        cmdParams.update({k:getattr(cfg, k) for k in dir(cfg) if '_' not in k}) # access to cfg params
+        cmdParams.update({k:v for k,v in vars(args).items() if v}) # the optional params if supplied
+        cmdParams.update({'relloc': relloc, 'absloc': join(self.outdir, relloc)})
+        return cmdParams
 
     def _saveExpDotmrl(self, expDir, expConfig):
         # write .mrl file and save as current expId
@@ -460,7 +474,7 @@ class MetaRunLog:
         # Load .mrl.cfg file if it exists
         try:
             with open(join(expDir, '.mrl.cfg')) as fh:
-                bconf = json.load(fh)
+                bconf = json.load(fh, object_hook=_decode_dict)
                 for k,v in bconf.iteritems():
                     setattr(cfg,k,v)
         except IOError: #file doesnt exist -> write a template
@@ -486,6 +500,17 @@ class MetaRunLog:
         if not new and not expId in self.expList:
             raise InvalidExpIdException("Experiment {} not found.".format(expId))
         return join(self.outdir, self._fmtSingleExp(expId))
+
+    def _newSubExp(self, expDir, subExpId, dotmrl, confContent):
+        subExpDir = join(expDir, self._fmtSubExp(subExpId))
+        os.mkdir(subExpDir)
+        self._copyConfigFrom(expDir, subExpDir)
+        with open(join(subExpDir, '.mrl'), 'w') as fh:
+            json.dump(dotmrl, fh, indent=2)
+            fh.write("\n")
+        with open(join(subExpDir, cfg.confTemplFile), "w") as fh:
+            fh.write(confContent)
+            fh.write("\n")
     
     def _getExpConf(self, expId):
         with open(join(self._getExpDir(expId), '.mrl')) as fh:
@@ -591,7 +616,8 @@ def main():
     except (NoCleanStateException,\
             InvalidExpIdException,\
             BatchException,\
-            HpcException,
+            ConfParserException,\
+            HpcException,\
             NoSuchJobException) as e:
         print(e)
     except Exception as e:

@@ -1,9 +1,9 @@
 outdir          = 'output'
 singleExpFormat = '{expId:06d}'
-batchExpFormat  = '{subExpId:03d}'
+subExpFormat    = '{subExpId:03d}'
 gitFailUntrackedDefault= 'no'
 copyFiles       = ['conf.lua', 'modeldef.lua']
-batchTemplFile  = 'conf.lua' # what file is expanded into template when calling batch
+confTemplFile   = 'conf.lua' # what file is expanded into template when calling batch
 #giturl          = 'git@github.com:tomsercu/lo.git'
 giturl          = 'cims:~/lo'
 hpcOutputData   = ['best_model.mat', 'last_model.mat'] # data, standard excluded from fetch

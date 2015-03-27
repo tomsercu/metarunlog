@@ -12,6 +12,8 @@ class InvalidExpIdException(Exception):
     pass
 class BatchException(Exception):
     pass
+class ConfParserException(Exception):
+    pass
 class HpcException(Exception):
     pass
 class NoSuchJobException(Exception):
