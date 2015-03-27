@@ -447,14 +447,11 @@ class MetaRunLog:
             fh.write("\n")
 
     def _checkValidExp(self, name):
-        # TODO change
         if len(name) != len(self._fmtSingleExp(0)): return False
         try:
-            int(name)
+            return self._fmtSingleExp(int(name)) == name
         except:
             return False
-        # parse each .mrl file in subdir? Probably overkill
-        return True
 
     def _loadExp(self, argExpId):
         expId = self._resolveExpId(argExpId)
