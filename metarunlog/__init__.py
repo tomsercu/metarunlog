@@ -243,26 +243,24 @@ class MetaRunLog:
                 # remove pwd from cmd
                 raise HpcException('Couldnt fetch files from hpc')
 
-    def makeJobs(self, args):
-        expId, expDir, expConfig = self._loadExp(args.expId)
+    def _makeJobList(self, jobName, expId, args):
+        expId, expDir, expConfig = self._loadExp(expId)
         jobList = []
-        jobName = args.jobName
         jobTemplate = self.jobTemplates[jobName]
-        runLocs = self._getRunLocations(expId, args.subExpId, expConfig, relativeTo=self.outdir)
+        subExpIds = self._getSubExperiments(expDir)
         # Make jobs
-        for relloc in runLocs:
-            print "Make job '{}' for location {}".format(jobName, relloc)
-            # Make location cmdParams
+        for subExpId in subExpIds:
+            print "Make job '{}' for subExperiment {}".format(jobName, subExpId)
+            relloc = join(self._fmtSingleExp(expId), subExpId)
             cmdParams = self._getCmdParams(expConfig, args, relloc)
-            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), expId, absloc, relloc))
+            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), join(expDir, subExpId)))
         return jobList
 
     def runJobs(self, args):
         import schedulers
         expId, expDir, expConfig = self._loadExp(args.expId)
-        # makeJobs
-        jobList = self.makeJobs(args)
         # Make scheduler
+        jobList = self._makeJobList(args.jobName, expId, args)
         resource = cfg.resources[args.resource]
         schedType = resource['scheduler']
         schedClass = getattr(schedulers, schedType+"Scheduler")
@@ -288,11 +286,12 @@ class MetaRunLog:
         scoreFunc = getattr(mrlWhetlab, jobName + 'ScoreFunc')
         expId, expDir, expConfig = self._loadExp(args.expId)
         #assert 'batchlist' not in expConfig, "TODO continue whetlab run"
-        # prepare the scheduler on the right resource
+        # prepare the scheduler on the right resource and existing jobs
+        jobList = self._makeJobList(jobName, expId, args)
         resource = cfg.resources[args.resource]
         schedType = resource['scheduler']
         schedClass = getattr(schedulers, schedType+"Scheduler")
-        sched = schedClass(expDir, [], args.resource, resource)
+        sched = schedClass(expDir, jobList, args.resource, resource)
         # load template and get hyperparameters
         confTemplate = ConfParser(join(expDir, cfg.confTemplFile))
         hyperparameters = confTemplate.whetlabHyperParameters
@@ -305,7 +304,6 @@ class MetaRunLog:
                                        parameters=hyperparameters,
                                        outcome={'name':scoreName})
         # main loop
-        # write status of all jobs in 'whetlabjobs' with score 
         # TODO set keyboard interrupt to do final checkpoint
         while len(self._getSubExperiments(expDir)) < cfg.whetlab['maxExperiments'] or \
                 not all(job.isFinished() for job in sched.jobList):
@@ -315,24 +313,24 @@ class MetaRunLog:
                 job.score = scoreFunc(job.absloc)
                 scientist.update(job.params, job.score)
             # if available resources, make and schedule next job
-            resourceAvail = sched.nextAvailableResource()
-            if resourceAvail is not None:
-                # get params from whetlab, make new subExperiment, make new job, schedule it.
-                params = scientist.suggest()
-                whetlabId = scientist.get_id(params)
-                subExpId = len(self._getSubExperiments(expDir)) + 1
-                confContent = confTemplate.renderFromParams(params)
-                self._newSubExp(expDir, subExpId, {'params':params, 'whetlabId':whetlabId}, confContent)
-                relloc = self._getRunLocations(expId, str(subExpId), expConfig, relativeTo=self.outdir)[0]
-                absloc = join(self.outdir, relloc)
-                cmdParams = self._getCmdParams(expConfig, args, relloc)
-                #pdb.set_trace()
-                nextJob = Job(jobName, self.jobTemplates[jobName], cmdParams, 
-                              expId, absloc, relloc)
-                nextJob.params = params
-                sched.jobList.append(nextJob)
-                print('Start job {} on resource {}'.format(str(nextJob), sched.fmtResource(resourceAvail)))
-                sched.startJob(nextJob, resourceAvail)
+            nextResource = sched.nextAvailableResource()
+            if nextResource is not None:
+                nextJob = sched.nextJob()
+                if not nextJob:
+                    # get params from whetlab, make new subExperiment, make new job, schedule it.
+                    params = scientist.suggest()
+                    whetlabId = scientist.get_id(params)
+                    subExpId = len(self._getSubExperiments(expDir)) + 1
+                    confContent = confTemplate.renderFromParams(params)
+                    self._newSubExp(expDir, subExpId, {'params':params, 'whetlabId':whetlabId}, confContent)
+                    relloc = join(self._fmtSingleExp(expId), subExpId)
+                    absloc = join(expDir, subExpId)
+                    cmdParams = self._getCmdParams(expConfig, args, relloc)
+                    nextJob = Job(jobName, self.jobTemplates[jobName], cmdParams, absloc)
+                    sched.addNewJob(nextJob)
+                    nextJob = sched.nextJob()
+                print('Start job {} on resource {}'.format(str(nextJob), sched.fmtResource(nextResource)))
+                sched.startJob(nextJob, nextResource)
                 sched.printStatus()
             else:
                 sched.printStatus()
@@ -486,6 +484,11 @@ class MetaRunLog:
         or raise error if not found """
         if expId == 'last' and self.lastExpId is not None:
             return self.lastExpId
+        elif type(expId) == int:
+            if expId in self.expList:
+                return expId
+            else:
+                raise InvalidExpIdException("Invalid experiment id (not in list): {}".format(int(expId)))
         elif expId.isdigit():
             if int(expId) in self.expList:
                 return int(expId)

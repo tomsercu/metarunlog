@@ -4,7 +4,8 @@
 # Date: 2015-03-12
 
 from metarunlog.exceptions import *
-from metarunlog.util import nowstring, sshify
+from metarunlog.util import nowstring, sshify, _decode_dict, _decode_list
+import json
 import subprocess
 import sys
 import os
@@ -15,14 +16,22 @@ from jinja2 import Template, Environment
 import datetime
 
 class Job:
-    def __init__(self, jobName, jobTemplate, cmdParams, expId, absloc, jobId):
+    #def __init__(self, jobName, jobTemplate, cmdParams, expId, absloc, jobId):
+    def __init__(self, jobName, jobTemplate, cmdParams, absloc):
         self.jobName    = jobName
         self.jobTemplate= jobTemplate
+        self.cmdParams  = cmdParams # params for rendering jobTemplate
         self.commandlist= [] # rendered jobTemplate
-        self.cmdParams  = cmdParams
-        self.expId      = expId
         self.absloc     = absloc
-        self.jobId      = jobId # relloc will be used but doesn't have to
+        self.jobId      = '_'.join(absloc.split('/')[-2:])
+        # To load from files, Three status flags and statusUpdateTime:
+        self.params    = None
+        self.whetlabid = None
+        self.started   = False
+        self.failed    = False
+        self.finished  = False
+        self.score     = None
+        self.loadJob()
         # to be set later
         self.resourceType = None
         self.resourceName = ''
@@ -32,12 +41,43 @@ class Job:
         self.sshPass    = None
         self.qsubHeader = None
         self.shellcmd   = None
-        # Three status flags and statusUpdateTime:
-        self.started    = False
-        self.failed     = False
-        self.finished   = False
         self.statusUpdateTime = datetime.datetime(1990,1,1)
         self.statusUpdateInterval = datetime.timedelta(milliseconds=300)
+
+    def loadJob(self):
+        """ load params, whetlabid and the job status information from file. """
+        try:
+            with open(join(self.absloc, '.mrl')) as fh:
+                d = json.load(fh, object_hook=_decode_dict)
+                self.params = d['params']
+                self.whetlabid = d['whetlabid'] if 'whetlabid' in d else None
+        except KeyError:
+            raise JobException('Malformed json file {}, expecting {\'paramas\':dict, \'whetlabid\':optional}, but received {}'.\
+                    format(join(self.absloc, '.mrl'), d))
+        try:
+            with open(join(self.absloc, '.mrl.'+self.jobName)) as fh:
+                d = json.load(fh, object_hook=_decode_dict)
+                self.started = d['started']
+                self.finished= d['finished']
+                self.failed  = d['failed']
+                self.score   = d['score']
+        except IOError: # if file is written, it should have started, failed, finished, score.
+            pass
+        if isfile(join(self.absloc, '.mrl.{}.lock'.format(self.jobName))):
+            self.finished = True
+            self.failed   = 'LOCKED'
+
+    def lockJob(self):
+        assert not isfile(join(self.absloc, '.mrl.{}.lock'.format(self.jobName)))
+        open(join(self.absloc, '.mrl.{}.lock'.format(self.jobName)), 'w').close()
+
+    def unLockJob(self):
+        os.remove(join(self.absloc, '.mrl.{}.lock'.format(self.jobName)))
+
+    def writeStatus(self):
+        keys = ['started', 'failed', 'finished', 'score', 'resourceType', 'resourceName', 'sshHost']
+        with open(join(self.absloc, '.mrl.' + self.jobName), 'w') as fh:
+            json.dump({k:getattr(self,k) for k in keys}, fh, indent=2)
 
     def renderCmd(self, v=True):
         """ 
@@ -97,6 +137,8 @@ class Job:
         subprocess.check_output(cmd, shell=True) # raises CalledProcessError
 
     def startLocal(self):
+        assert not self.resourceType, "Job already assigned to a resource"
+        self.lockJob()
         self.started = True
         self.outfn = join(self.absloc, '{}_local_{}.log').format(self.jobName, nowstring(sec=False))
         self.outfh = open(self.outfn, 'w')
@@ -107,12 +149,14 @@ class Job:
         self.resourceType = 'local'
         self.resourceName = 'local'
         self.updateStatus()
+        self.writeStatus()
 
     def startSsh(self, host, device, sshPass, copyFiles):
         """
         ssh submit this job. Just use subprocess, shell=True and launch ssh with the rendered command.
         Killing the subprocess kills the ssh session.
         """
+        assert not self.resourceType, "Job already assigned to a resource"
         self.started = True
         self.outfn = join(self.absloc, '{}_ssh_{}_{}_{}.log').format(self.jobName, host, device, nowstring(sec=False))
         self.outfh = open(self.outfn, 'w')
@@ -133,13 +177,16 @@ class Job:
             self.finished = True
             self.failed = e.returncode
         else:
+            self.lockJob()
             self.startProc()
             self.updateStatus()
+        self.writeStatus()
 
     def startPbs(self, host, sshPass, copyFiles, qsubHeader):
         """ 
         qsub to hpc and quit. In the future: keep polling with ssh qstat and parse output.
         """
+        assert not self.resourceType, "Job already assigned to a resource"
         self.started = True
         self.sshHost = host
         self.sshPass = sshPass
@@ -171,6 +218,7 @@ class Job:
             else:
                 qsubid = stdout.replace('\n','')
                 self.resourceName = '{}[{}]'.format(host, qsubid)
+        self.writeStatus()
 
     def updateStatus(self):
         if (not self.started) or self.finished:
@@ -178,10 +226,13 @@ class Job:
         if datetime.datetime.now() - self.statusUpdateTime < self.statusUpdateInterval:
             return
         # regular update
-        if self.resourceType == 'local' or self.resourceType == 'ssh':
+        if not self.resourceType:
+            pass # loaded to resume, unscheduled
+        elif self.resourceType == 'local' or self.resourceType == 'ssh':
             self.finished = (self.proc.poll() is not None)
             if self.finished:
                 self.finishProc()
+                self.unLockJob()
         elif self.resourceType == 'pbs':
             raise SchedulerException("Pbs should never be updated as it finishes right away")
         else:
@@ -216,12 +267,15 @@ class Job:
                 raise Exception("todo")
 
     def __del__(self):
-        if self.isRunning():
-            if self.resourceType == 'local' or self.resourceType == 'ssh':
+        if self.isRunning() and self.resourceType == 'local' or self.resourceType == 'ssh':
+            if self.proc.poll() is None:
                 print "{} job {} - send SIGKILL to proc group {}".\
                         format(self.resourceName, self.jobId, self.proc.pid)
                 os.killpg(self.proc.pid, signal.SIGKILL)
-                # TODO sigkill on the ssh session doesnt sigkill the remote process. Open up a new ssh connection to sigkill? thats a mess
+            try:
+                self.unLockJob()
+            except:
+                pass
     def __str__(self):
         return "{} {} ({}): ".\
                 format(self.jobName, self.jobId, self.resourceName if self.resourceName else 'unscheduled')

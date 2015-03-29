@@ -20,3 +20,5 @@ class NoSuchJobException(Exception):
     pass
 class SchedulerException(Exception):
     pass
+class JobException(Exception):
+    pass

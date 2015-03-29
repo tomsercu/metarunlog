@@ -14,7 +14,10 @@ def nowstring(sec=True, ms= False):
 def sshify(cmd, sshHost, sshPass, vfh=None):
     cleancmd = ''
     if sshHost:
-        cmd = 'ssh {} "{}"'.format(sshHost, cmd)
+        #cmd = 'ssh -t {} "{}"'.format(sshHost, cmd) #works but messes up terminal
+        #cmd = 'ssh {} "shopt -s huponexit; {}"'.format(sshHost, cmd) # doesnt work to kill job on exit
+        cmd = 'ssh {} "{}"'.format(sshHost, cmd) 
+        #TODO use paramiko or pexpect see http://stackoverflow.com/questions/4669204/send-ctrl-c-to-remote-processes-started-via-subprocess-popen-and-ssh
     if sshPass:
         cleancmd = "sshpass -p '{}' {}".format('***', cmd)
         cmd = "sshpass -p '{}' {}".format(sshPass, cmd)
