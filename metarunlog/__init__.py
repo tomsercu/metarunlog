@@ -310,8 +310,11 @@ class MetaRunLog:
             # update whetlab with finished jobs
             finishedJobs  = sched.popFinishedJobs()
             for job in finishedJobs:
-                job.score = scoreFunc(job.absloc)
-                scientist.update(job.params, job.score)
+                try:
+                    job.score = scoreFunc(job.absloc)
+                    scientist.update(job.params, job.score)
+                except:
+                    scientist.update_as_failed(job.params)
             # if available resources, make and schedule next job
             nextResource = sched.nextAvailableResource()
             if nextResource is not None:
@@ -323,8 +326,8 @@ class MetaRunLog:
                     subExpId = len(self._getSubExperiments(expDir)) + 1
                     confContent = confTemplate.renderFromParams(params)
                     self._newSubExp(expDir, subExpId, {'params':params, 'whetlabId':whetlabId}, confContent)
-                    relloc = join(self._fmtSingleExp(expId), subExpId)
-                    absloc = join(expDir, subExpId)
+                    relloc = join(self._fmtSingleExp(expId), self._fmtSubExp(subExpId))
+                    absloc = join(self.outdir, relloc)
                     cmdParams = self._getCmdParams(expConfig, args, relloc)
                     nextJob = Job(jobName, self.jobTemplates[jobName], cmdParams, absloc)
                     sched.addNewJob(nextJob)
@@ -621,7 +624,9 @@ def main():
             BatchException,\
             ConfParserException,\
             HpcException,\
-            NoSuchJobException) as e:
+            NoSuchJobException,\
+            JobException,\
+            SchedulerException) as e:
         print(e)
     except Exception as e:
         print "Unchecked exception"
