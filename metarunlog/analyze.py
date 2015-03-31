@@ -1,9 +1,15 @@
-import pandas as pd
 import os
 import subprocess
 from os.path import join
-import matplotlib; matplotlib.use('agg')
+import pandas as pd
+import matplotlib; 
+try:
+    matplotlib.use('GTKAgg') #default
+except:
+    matplotlib.use('agg')
 import matplotlib.pyplot as plt
+from matplotlib import animation
+import numpy as np
 import markdown
 
 ## OVERVIEW FUNCTIONS
@@ -101,6 +107,49 @@ def plotSinglePerf(expDir, outdir, Dparams=None, runId='def', ylim={'err':None, 
         else:
             return [(pfn1, 'plot', 'Error pct'), (pfn2, 'plot', 'nll loss')]
 
+def plotGradients(expDir, outdir, Dparams=None, runId='def'):
+    print("plotGradients: plot gradients gif - {}".format(runId))
+    fn = join(expDir, 'logs/hist_wf.csv')
+    gfn = join(expDir, 'logs/hist_gwf.csv')
+    try:
+        q = pd.read_csv(fn, index_col='epoch') # quantity: like weight, output, bias
+        gq = pd.read_csv(gfn, index_col='epoch') # grad quantity
+    except Exception as e:
+        print("failed to load gradients - {} - {}".format(runId, str(e)))
+        return None
+    else:
+        pfn = 'plotGradients_{}.mp4'.format(runId)
+        # TODO better way of dealing with outliers that are massacring the range
+        xmin = min(q['min'].min(), gq['min'].min())
+        xmax = max(q['max'].max(), gq['max'].max())
+        xcenter = 0.5 * (xmin+xmax)
+        xmin = xcenter + (xmin-xcenter) * 0.1
+        xmax = xcenter + (xmax-xcenter) * 0.1
+        ymin = 0
+        ymax = max(q.ix[:, 'f1':].max().max(), gq.ix[:,'f1':].max().max())
+        fig, ax = plt.subplots()
+        qline, = ax.plot([0], [0])
+        gqline, = ax.plot([0], [0])
+        title   = ax.text(.5, .95, '', transform=ax.transAxes)
+        ax.set_xlim(xmin, xmax)
+        ax.set_ylim(ymin, ymax)
+        def animate(epoch):
+            x, step = np.linspace(q.ix[epoch, 'min'], q.ix[epoch, 'max'], q.ix[epoch, 'nbins'], False, True)
+            x = x + 0.5*step
+            qline.set_data(x, q.ix[epoch, 'f1':])
+            x, step = np.linspace(gq.ix[epoch, 'min'], gq.ix[epoch, 'max'], gq.ix[epoch, 'nbins'], False, True)
+            x = x + 0.5*step
+            gqline.set_data(x, gq.ix[epoch, 'f1':])
+            title.set_text('%3d'%epoch)
+            return qline, gqline, title
+        def init():
+            return qline, gqline, title # initial frame is clear
+        ani = animation.FuncAnimation(fig, animate, q.index.values, init_func=init, interval=300,blit=True)
+        ani.save(join(outdir, pfn), fps=30, extra_args=['-vcodec', 'libx264'])
+        #plt.show()
+        plt.close('all')
+        return [(pfn, 'mp4', 'flat weights & grad flat weights')]
+
 class HtmlFile:
     # TODO use jinja templating here
     def __init__(self):
@@ -140,6 +189,8 @@ class HtmlFile:
                 self.addPlot(rdata)
             elif rtype == 'text':
                 self.addText(rdata)
+            elif rtype == 'mp4':
+                self.addMp4(rdata)
             else:
                 raise Exception("Unknown rtype {}".format(rtype))
 
@@ -149,3 +200,7 @@ class HtmlFile:
         self.addParagraph(table.to_html())
     def addText(self, text):
         self.body += markdown.markdown(text)
+    def addMp4(self, videofn):
+        self.body += '<div>\n<video preload="none" controls>\n'
+        self.body += '<source src="{}" type="video/mp4; codecs="avc1.42E01E, mp4a.40.2"">'.format(videofn)
+        self.body += '</video>\n</div>\n'
