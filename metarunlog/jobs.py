@@ -52,7 +52,7 @@ class Job:
                 self.params = d['params']
                 self.whetlabid = d['whetlabid'] if 'whetlabid' in d else None
         except KeyError:
-            raise JobException('Malformed json file {}, expecting {\'paramas\':dict, \'whetlabid\':optional}, but received {}'.\
+            raise JobException('Malformed json file {}, expecting {\'params\':dict, \'whetlabid\':optional}, but received {}'.\
                     format(join(self.absloc, '.mrl'), d))
         try:
             with open(join(self.absloc, '.mrl.'+self.jobName)) as fh:

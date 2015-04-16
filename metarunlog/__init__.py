@@ -12,7 +12,10 @@ from os import listdir
 from os.path import isdir, isfile, join, relpath, expanduser
 import argparse
 import subprocess
-import json
+try:
+    import simplejson as json # way better error messaging
+except:
+    import json
 import pdb
 import datetime
 from collections import OrderedDict
@@ -245,15 +248,30 @@ class MetaRunLog:
 
     def _makeJobList(self, jobName, expId, args):
         expId, expDir, expConfig = self._loadExp(expId)
-        jobList = []
         jobTemplate = self.jobTemplates[jobName]
-        subExpIds = self._getSubExperiments(expDir)
-        # Make jobs
-        for subExpId in subExpIds:
-            print "Make job '{}' for subExperiment {}".format(jobName, subExpId)
-            relloc = join(self._fmtSingleExp(expId), subExpId)
+        if (not args.subExpId) or args.subExpId == 'all':
+            jobList = []
+            subExpIds = self._getSubExperiments(expDir)
+            for subExpId in subExpIds:
+                print "Make job '{}' for subExperiment {}".format(jobName, subExpId)
+                relloc = join(self._fmtSingleExp(expId), subExpId)
+                cmdParams = self._getCmdParams(expConfig, args, relloc)
+                jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), join(expDir, subExpId)))
+        elif args.subExpId == 'single': # not expanded
+            print "Make single job '{}' for expId {}".format(jobName, expId)
+            relloc = self._fmtSingleExp(expId)
             cmdParams = self._getCmdParams(expConfig, args, relloc)
-            jobList.append(Job(jobName, jobTemplate, cmdParams.copy(), join(expDir, subExpId)))
+            jobList = [Job(jobName, jobTemplate, cmdParams.copy(), expDir)]
+        else:
+            # try to parse single subExpId from expanded
+            try:
+                subExpId = self._fmtSubExp(int(args.subExpId))
+                print "Make job '{}' for subExperiment {}".format(jobName, subExpId)
+                relloc = join(self._fmtSingleExp(expId), subExpId)
+                cmdParams = self._getCmdParams(expConfig, args, relloc)
+                jobList = [Job(jobName, jobTemplate, cmdParams.copy(), join(expDir, subExpId))]
+            except ValueError as e:
+                raise JobException("Invalid subExpId {} - {}".format(args.subExpId, str(e)))
         return jobList
 
     def runJobs(self, args):
@@ -288,6 +306,7 @@ class MetaRunLog:
         #assert 'batchlist' not in expConfig, "TODO continue whetlab run"
         # prepare the scheduler on the right resource and existing jobs
         jobList = self._makeJobList(jobName, expId, args)
+        assert False, "TODO joblist wont be empty bc single-exp change"
         resource = cfg.resources[args.resource]
         schedType = resource['scheduler']
         schedClass = getattr(schedulers, schedType+"Scheduler")
@@ -595,13 +614,14 @@ def main():
     parser_whetlab = subparsers.add_parser('whetlab', help = 'Hyper optimize through whetlab')
     parser_whetlab.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_whetlab.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
+    parser_whetlab.set_defaults(subExpId=None) # for makeJobList
     parser_whetlab.set_defaults(mode='whetlab')
     # job parsers , and add optvars to whetlab
     for jobName, commandList in cfg.jobs.iteritems():
         optVars = mrlState.jobOptVars[jobName]
         parser_job = subparsers.add_parser(jobName, help = 'job cmd {} from your .mrl.cfg file'.format(jobName))
         parser_job.add_argument('expId', help='experiment ID', default='last', nargs='?')
-        parser_job.add_argument('subExpId', help='subExperiment ID', default='all', nargs='?')
+        parser_job.add_argument('subExpId', help='subExperiment ID: all, single (no makebatch expansion), or a specific subexpid. default: all', default='all', nargs='?')
         parser_job.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
         for varName in optVars:
             parser_job.add_argument('-'+varName)
