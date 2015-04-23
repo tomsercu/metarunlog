@@ -8,6 +8,7 @@ from metarunlog.exceptions import *
 from metarunlog.util import nowstring, sshify, _decode_dict, _decode_list
 import os
 import sys
+import math
 from os import listdir
 from os.path import isdir, isfile, join, relpath, expanduser
 import argparse
@@ -306,7 +307,6 @@ class MetaRunLog:
         #assert 'batchlist' not in expConfig, "TODO continue whetlab run"
         # prepare the scheduler on the right resource and existing jobs
         jobList = self._makeJobList(jobName, expId, args)
-        assert False, "TODO joblist wont be empty bc single-exp change"
         resource = cfg.resources[args.resource]
         schedType = resource['scheduler']
         schedClass = getattr(schedulers, schedType+"Scheduler")
@@ -614,7 +614,7 @@ def main():
     parser_whetlab = subparsers.add_parser('whetlab', help = 'Hyper optimize through whetlab')
     parser_whetlab.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_whetlab.add_argument('-resource', help='resource (cluster) to use', choices = cfg.resources.keys(), default='local')
-    parser_whetlab.set_defaults(subExpId=None) # for makeJobList
+    parser_whetlab.set_defaults(subExpId='all') # for makeJobList
     parser_whetlab.set_defaults(mode='whetlab')
     # job parsers , and add optvars to whetlab
     for jobName, commandList in cfg.jobs.iteritems():
