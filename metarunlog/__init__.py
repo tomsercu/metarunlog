@@ -550,6 +550,7 @@ class MetaRunLog:
 
 def main():
     try:
+        sys.path.append(os.getcwd()) # include modules in basedir like myAnalyze
         mrlState = MetaRunLog(os.getcwd())
     except InvalidOutDirException as e:
         print(e)
