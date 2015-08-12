@@ -64,7 +64,7 @@ class HtmlFile:
     def addPlot(self, plotfn):
         self.addParagraph('<img src="{}"></img>\n'.format(plotfn))
     def addTable(self, table): 
-        self.addParagraph(table.to_html())
+        self.addParagraph(table.to_html(escape=False))
     def addText(self, text):
         self.body += markdown.markdown(text)
     def addMp4(self, videofn):
