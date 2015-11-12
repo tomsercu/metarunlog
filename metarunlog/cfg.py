@@ -1,5 +1,5 @@
 outdir          = 'output'
-singleExpFormat = '{expId:06d}'
+singleExpFormat = '{expId:04d}'
 subExpFormat    = '{subExpId:03d}'
 gitFailUntrackedDefault= 'no'
 copyFiles       = ['conf.lua', 'modeldef.lua']

@@ -26,11 +26,11 @@ class AbstractScheduler:
         # Check if jobs already running
         # TODO make this a checkpoint for resuming an interrupted scheduler session, given a policy on resuming
         # interrupted job (for example: jobs dict defines "run": [...] and runResume: [...])
-        if isfile(join(self.expDir, '.mrl.running')):
-            raise SchedulerException("Lockfile exists: {}. Clear up situation first and remove lockfile."\
-                    .format(join(self.expDir, '.mrl.running')))
-        else:
-            open(join(self.expDir, '.mrl.running'),"w").close()
+        #if isfile(join(self.expDir, '.mrl.running')):
+            #raise SchedulerException("Lockfile exists: {}. Clear up situation first and remove lockfile."\
+                    #.format(join(self.expDir, '.mrl.running')))
+        #else:
+            #open(join(self.expDir, '.mrl.running'),"w").close()
 
     def main(self):
         while not all(job.isFinished() for job in self.jobList):
@@ -114,8 +114,8 @@ class AbstractScheduler:
         if rjobs:
             print("{} Sending SIGKILL to remaining jobs".format(self.__class__.__name__))
         del self.jobList[:]
-        print("{} remove .mrl.running".format(self.__class__.__name__))
-        os.remove(join(self.expDir, '.mrl.running'))
+        #print("{} remove .mrl.running".format(self.__class__.__name__))
+        #os.remove(join(self.expDir, '.mrl.running'))
 
 class localScheduler(AbstractScheduler):
     def __init__(self, expDir, jobList, resourceName, resourceProp):
@@ -170,5 +170,6 @@ class pbsScheduler(AbstractScheduler):
     def terminate(self):
         pass
     def __del__(self):
-        print("{} remove .mrl.running".format(self.__class__.__name__))
-        os.remove(join(self.expDir, '.mrl.running'))
+        #print("{} remove .mrl.running".format(self.__class__.__name__))
+        #os.remove(join(self.expDir, '.mrl.running'))
+        pass

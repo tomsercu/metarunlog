@@ -1,14 +1,6 @@
 import os
 import subprocess
 from os.path import join
-import pandas as pd
-import matplotlib; 
-try:
-    matplotlib.use('GTKAgg') #default
-except:
-    matplotlib.use('agg')
-import matplotlib.pyplot as plt
-from matplotlib import animation
 import numpy as np
 import markdown
 try:

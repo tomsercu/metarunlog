@@ -89,7 +89,7 @@ class ConfParser:
         keys = grid.keys()
         vals = list(itertools.product(*[grid[k] for k in keys]))
         self.params = [dict(zip(keys, v)) for v in vals]
-        self.params = [dict(d1.items() + d2.items()) for d1,d2 in itertools.product(self.params, params)]
+        self.params = [dict(d1.items() + d2.items()) for d1,d2 in itertools.product(params, self.params)]
         self.output = []
         for i, param in enumerate(self.params):
             self.output.append((i+1, param, self.renderFromParams(param)))
@@ -194,7 +194,8 @@ class MetaRunLog:
             if args.gdesc:
                 row += "\t" + expConfig['gitDescription']
             if args.desc:
-                row += "\t" + expConfig['description']
+                expDir = self._getExpDir(expId)
+                row += "\t" + self._expIsDoneIndicator(expDir) + expConfig['description']
             print row
         return ""
 
@@ -376,14 +377,13 @@ class MetaRunLog:
         if subExpIds:
             try:
                 paramList = [self._loadSubExp(join(expDir,subExpId))['params'] for subExpId in subExpIds]
-            except IOError: # old style, with batchlist in expDir/.mrl
-                paramList = expConfig['batchlist']
-                subExpIds = [self._fmtSubExp(subExpId) for subExpId in range(1,len(paramList)+1)]
+            except (IOError, KeyError) as e: # dummy
+                paramList = [{'subExpId': subExpId} for subExpId in subExpIds]
             Dparams = pd.DataFrame(paramList, index=subExpIds)
         outhtml = analyze.HtmlFile()
-        title = 'Experiment {} - {}'.format(cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
+        title = '{} {} - {}'.format(cfg.name, cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
-        outhtml.addTitle(title)
+        outhtml.addTitle(self._expIsDoneIndicator(expDir) + title)
         outhtml.parseNote(join(expDir,'.mrl.note'))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
         if subExpIds:
@@ -409,17 +409,17 @@ class MetaRunLog:
         outhtml.render(join(outdir, 'index.html'))
         if cfg.analysis_webdir:
             webdir = join(cfg.analysis_webdir, self._fmtSingleExp(expId))
-            if not os.path.exists(webdir):
-                os.mkdir(webdir)
-            subprocess.call("cp -r {}/* {}/".format(outdir, webdir), shell=True)
-            subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
-            subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
+            #if not os.path.exists(webdir):
+                #os.mkdir(webdir)
+            subprocess.call("rsync -az {}/* {}/".format(outdir, webdir), shell=True)
+            #subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
+            #subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
             print "Copied to webdir {}".format(webdir)
 
     def _getSubExperiments(self, expDir):
         """ returns a list of the existing subexperiments as formatted strings """
         subexp = []
-        for subdir in listdir(expDir):
+        for subdir in sorted(listdir(expDir)):
             try:
                 if self._fmtSubExp(int(subdir)) == subdir:
                     subexp.append(str(subdir))
@@ -547,6 +547,12 @@ class MetaRunLog:
             if description:
                 fh.write('### ' + description + '\n')
             fh.write('#### Goal\n\n#### Observations\n\n#### Conclusions\n')
+
+    def _expIsDone(self, expDir):
+        return os.path.exists(os.path.join(expDir, '.mrl.done'))
+
+    def _expIsDoneIndicator(self, expDir):
+        return '   ' if  self._expIsDone(expDir) else '** '
 
 def main():
     try:
