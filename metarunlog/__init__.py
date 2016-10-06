@@ -22,6 +22,7 @@ import datetime
 from collections import OrderedDict
 from shutil import copy as shcopy
 import shutil
+import jinja2
 from jinja2 import Template, Environment, meta
 import itertools
 import getpass
@@ -388,7 +389,7 @@ class MetaRunLog:
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
         if subExpIds:
             # analysis_overview functions
-            for funcname, xtrargs in cfg.analysis_overview.items():
+            for funcname, xtrargs in sorted(cfg.analysis_overview.items()):
                 outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
                 retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
                 outhtml.addRetVal(retval)
