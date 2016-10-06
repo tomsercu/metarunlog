@@ -5,9 +5,9 @@ import numpy as np
 import markdown
 try:
     # Make myAnalyze.py file in your mrl basedir and register the functions in your basedir .mrl.cfg file
-    from myAnalyze import *
+    from mrl_analyze import *
 except Exception as e:
-    print("Could not load local myAnalyze module: {}".format(str(e)))
+    print("Could not load local mrl_analyze module: {}".format(str(e)))
 
 class HtmlFile:
     # TODO use jinja templating here
