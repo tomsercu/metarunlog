@@ -93,3 +93,17 @@ If you want a command to be failable, write it as (cmd || true) so it doesnt int
 + sshpass: http://sourceforge.net/projects/sshpass/
 + jinja2: http://jinja.pocoo.org/
 + markdown for using analyze mode
+
+# TODO 2016-10-07 
++ add hooks, in mrl_hooks.py
+  @ register_before("new")
+  @ register_after(..)
+  @ register_cmd()
+  then parser should have different target, being hookAndFunc(name)
++ think about workflow like:
+    attscore (decode)
+    genLats
+    add spj script like launchMany does, after expandBatch
++ rewrite analyze is piece of crap
++ rewrite this readme
+

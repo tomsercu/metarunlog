@@ -2,6 +2,7 @@
 # Author: Tom Sercu
 
 import datetime
+import subprocess
 
 def nowstring(sec=True, ms= False):
     tstr = datetime.datetime.now().isoformat()
@@ -51,3 +52,10 @@ def _decode_dict(data):
             value = _decode_dict(value)
         rv[key] = value
     return rv
+
+def get_commit():
+    cline = subprocess.check_output("git log -n1 --oneline", shell=True)
+    #print "cline: ", cline
+    cline = cline.split()
+    return (cline[0], " ".join(cline[1:]))
+
