@@ -173,8 +173,13 @@ class MetaRunLog:
         return "Generated subExperiments {} for expId {}.\n".format(subExpList, expId)
 
     def analyze(self, args):
+        ## Load modules only needed for analyzing and rendering the html file
         import pandas as pd
-        import analyze
+        import renderHtml
+        try:
+            import mrl_analyze
+        except Exception as e:
+            print("Could not load local mrl_analyze module: {}".format(str(e)))
         expId, expDir, expConfig = self._loadExp(args.expId)
         print "Analyze expId {} in path {}".format(expId, expDir)
         outdir = args.outdir if args.outdir else join(expDir, 'analysis')
@@ -187,7 +192,7 @@ class MetaRunLog:
             except (IOError, KeyError) as e: # dummy
                 paramList = [{'subExpId': subExpId} for subExpId in subExpIds]
             Dparams = pd.DataFrame(paramList, index=subExpIds)
-        outhtml = analyze.HtmlFile()
+        outhtml = renderHtml.HtmlFile()
         title = '{} {} - {}'.format(cfg.name, cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
         outhtml.addTitle(self._expIsDoneIndicator(expDir) + title)
@@ -197,7 +202,7 @@ class MetaRunLog:
             # analysis_overview functions
             for funcname, xtrargs in sorted(cfg.analysis_overview.items()):
                 outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
-                retval = getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
+                retval = getattr(mrl_analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
                 outhtml.addRetVal(retval)
         # per exp functions
         if subExpIds:
@@ -206,12 +211,12 @@ class MetaRunLog:
                 outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
                 for funcname, xtrargs in cfg.analysis_subexp.items():
                     outhtml.addHeader('{}'.format(funcname), 2)
-                    retval = getattr(analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
+                    retval = getattr(mrl_analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
                     outhtml.addRetVal(retval)
         else:
             for funcname, xtrargs in cfg.analysis_subexp.items():
                 outhtml.addHeader('{}'.format(funcname), 1)
-                retval = getattr(analyze, funcname)(expDir, outdir, None, 'def', *xtrargs)
+                retval = getattr(mrl_analyze, funcname)(expDir, outdir, None, 'def', *xtrargs)
                 outhtml.addRetVal(retval)
         outhtml.render(join(outdir, 'index.html'))
         if cfg.analysis_webdir:
@@ -394,8 +399,6 @@ def main():
             raise
     # Resume normal operation.
     parser = argparse.ArgumentParser(description='Metarunlog.')
-    #mode_choices = [m for m in dir(MetaRunLog) if '_' not in m]
-    #parser.add_argument('mode', metavar='mode', help='Mode to run metarunlog.', choices=mode_choices)
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands')
     # new
     parser_new = subparsers.add_parser('new', help='new experiment directory.')

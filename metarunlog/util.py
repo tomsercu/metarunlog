@@ -1,5 +1,6 @@
 # Metarunlog, experiment management tool.
 # Author: Tom Sercu
+# Date: 2015-01-23
 
 import datetime
 import subprocess

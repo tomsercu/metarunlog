@@ -1,3 +1,6 @@
+# Metarunlog, experiment management tool.
+# Author: Tom Sercu
+# Date: 2016-10-07
 class InvalidOutDirException(Exception):
     pass
 class NoBasedirConfig(Exception):

@@ -1,13 +1,13 @@
+# Metarunlog, experiment management tool.
+# Author: Tom Sercu
+# Date: 2016-10-09
+# Defines HtmlFile and helper functions to build up the index.html from mrl_analyze functions output.
+
 import os
 import subprocess
 from os.path import join
 import numpy as np
 import markdown
-try:
-    # Make myAnalyze.py file in your mrl basedir and register the functions in your basedir .mrl.cfg file
-    from mrl_analyze import *
-except Exception as e:
-    print("Could not load local mrl_analyze module: {}".format(str(e)))
 
 class HtmlFile:
     # TODO use jinja templating here

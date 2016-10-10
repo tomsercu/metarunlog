@@ -15,6 +15,7 @@ setup(name='metarunlog',
       packages=['metarunlog'],
       install_requires=[
           'jinja2',
+          'markdown'
       ],
       scripts = ['bin/mrl'],
       zip_safe=False)

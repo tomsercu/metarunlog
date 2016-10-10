@@ -1,12 +1,18 @@
+# Metarunlog, experiment management tool.
+# Author: Tom Sercu
+# Date: 2016-10-07
 from jinja2 import Template
 from collections import OrderedDict
 import itertools
 
 class ConfParser:
     """
-    ConfParser class is initialized with batch-template (list of lines)
+    ConfParser class will take a template experiment config file, 
+    which ends with MRL:grid[] or MRL:params instructions and allow
+    easy expansion into real experiment config files.
+    It is initialized with experiment config template (list of lines)
     including the last lines determining the values,
-    and generates self.output as a list of strings (that can be written to file).
+    and generates self.output as a list of strings (to be written to file).
     """
     def __init__(self, templatefile):
         try:

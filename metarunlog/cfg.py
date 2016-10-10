@@ -1,3 +1,9 @@
+# Metarunlog, experiment management tool.
+# Author: Tom Sercu
+# Date: 2016-10-07
+# Default configuration, values will be overwritten by .mrl.cfg in basedir.
+
+name            = 'myproject'
 outdir          = 'output'
 singleExpFormat = '{expId:04d}'
 subExpFormat    = '{subExpId:03d}'
