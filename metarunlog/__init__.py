@@ -3,7 +3,7 @@
 # Author: Tom Sercu
 # Date: 2015-01-23
 
-from  metarunlog import cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
+from metarunlog import cfg # NOTE cfg is modified by MetaRunLog._loadBasedirConfig() with custom configuration.
 from metarunlog.exceptions import *
 from metarunlog.util import nowstring, sshify, _decode_dict, _decode_list, get_commit
 from metarunlog.confParser import ConfParser
@@ -117,6 +117,7 @@ class MetaRunLog:
         self._saveExpDotmrl(expDir, expConfig)
         self._putEmptyNote(expDir, expConfig['description'])
         self.lastExpId = expId
+        self.expList.append(expId)
         return expDir
 
     def info(self, args):
@@ -227,6 +228,16 @@ class MetaRunLog:
             #subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
             #subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
             print "Copied to webdir {}".format(webdir)
+
+    def execWithHooks(self, mode, args):
+        noneFunc   = lambda x:None # empty dummy func
+        hookBefore = getattr(self, 'before_' + args.mode, noneFunc)
+        hookAfter  = getattr(self, 'after_'  + args.mode, noneFunc)
+        # NOTE each hook before/after/func itself has to get expId, expDir from args itself.
+        hookBefore(args)
+        ret = getattr(self, args.mode)(args)
+        hookAfter(args)
+        return ret
 
     def _loadSubExp(self, subExpDir):
         with open(join(subExpDir, '.mrl')) as fh:
@@ -370,6 +381,11 @@ class MetaRunLog:
     def _expIsDoneIndicator(self, expDir):
         return '   ' if  self._expIsDone(expDir) else '** '
 
+# Extend MetaRunLog with mrl_hooks
+import mrl_hooks # from basedir, user-supplied
+for hook in cfg.hooks:
+    setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
+
 def main():
     try:
         sys.path.append(os.getcwd()) # include modules in basedir like myAnalyze
@@ -430,10 +446,22 @@ def main():
     parser_Analyze.add_argument('expId', help='experiment ID', default='last', nargs='?')
     parser_Analyze.add_argument('-outdir', help='path to output directory, default: expDir/analysis/')
     parser_Analyze.set_defaults(mode='analyze')
+    # functions registered as standalone hooks
+    for hook in cfg.hooks:
+        if 'before_' in hook or 'after_' in hook:
+            continue
+        parser_hook = subparsers.add_parser(hook, help = 'custom function from mrl_hooks.py')
+        parser_hook.add_argument('expId', help='experiment ID', default='last', nargs='?')
+        for xarg, defaultval in cfg.hooks[hook].iteritems():
+            if defaultval:
+                parser_hook.add_argument('-' + xarg, default=defaultval, help='optional xarg, default: {}'.format(defaultval), nargs='?')
+            else: # named argument, yet required. Slightly bad form.
+                parser_hook.add_argument('-' + xarg, help='required xarg', required=True) #, nargs='?')
+        parser_hook.set_defaults(mode=hook)
     #PARSE
     args = parser.parse_args()
     try:
-        ret = getattr(mrlState, args.mode)(args)
+        ret = mrlState.execWithHooks(args.mode, args)
         if ret: print(ret)
     except (NoCleanStateException,\
             InvalidExpIdException,\

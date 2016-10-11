@@ -18,3 +18,9 @@ analysis_subexp = {
     'plotSinglePerf': (),
 }
 analysis_webdir = '/u/goelv/tsercu/work/002/analysis'
+hooks = {
+    'after_new' : {},
+    'after_makebatch' : {},
+    'run'       : {},
+    'score'     : {'epoch':None, 'langid':'swb', 'testset':'hub5'}
+}
