@@ -382,9 +382,13 @@ class MetaRunLog:
         return '   ' if  self._expIsDone(expDir) else '** '
 
 # Extend MetaRunLog with mrl_hooks
-import mrl_hooks # from basedir, user-supplied
-for hook in cfg.hooks:
-    setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
+try:
+    import mrl_hooks # from basedir, user-supplied
+    for hook in cfg.hooks:
+        setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
+except ImportError:
+    print('Warning: no valid mlr_hooks.py file - will ignore cfg.hooks')
+    mrl_hooks = None
 
 def main():
     try:
@@ -447,17 +451,18 @@ def main():
     parser_Analyze.add_argument('-outdir', help='path to output directory, default: expDir/analysis/')
     parser_Analyze.set_defaults(mode='analyze')
     # functions registered as standalone hooks
-    for hook in cfg.hooks:
-        if 'before_' in hook or 'after_' in hook:
-            continue
-        parser_hook = subparsers.add_parser(hook, help = 'custom function from mrl_hooks.py')
-        parser_hook.add_argument('expId', help='experiment ID', default='last', nargs='?')
-        for xarg, defaultval in cfg.hooks[hook].iteritems():
-            if defaultval:
-                parser_hook.add_argument('-' + xarg, default=defaultval, help='optional xarg, default: {}'.format(defaultval), nargs='?')
-            else: # named argument, yet required. Slightly bad form.
-                parser_hook.add_argument('-' + xarg, help='required xarg', required=True) #, nargs='?')
-        parser_hook.set_defaults(mode=hook)
+    if mrl_hooks:
+        for hook in cfg.hooks:
+            if 'before_' in hook or 'after_' in hook:
+                continue
+            parser_hook = subparsers.add_parser(hook, help = 'custom function from mrl_hooks.py')
+            parser_hook.add_argument('expId', help='experiment ID', default='last', nargs='?')
+            for xarg, defaultval in cfg.hooks[hook].iteritems():
+                if defaultval:
+                    parser_hook.add_argument('-' + xarg, default=defaultval, help='optional xarg, default: {}'.format(defaultval), nargs='?')
+                else: # named argument, yet required. Slightly bad form.
+                    parser_hook.add_argument('-' + xarg, help='required xarg', required=True) #, nargs='?')
+            parser_hook.set_defaults(mode=hook)
     #PARSE
     args = parser.parse_args()
     try:
