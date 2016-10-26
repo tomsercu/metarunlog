@@ -7,7 +7,7 @@
 # while without prefix will become a new command.
 # The hooks wil be registered on mrlState so will have access to the mrlState in self.
 
-import cfg      # includes modifications from __init__
+import metarunlog.cfg as cfg      # includes modifications from __init__
 import os, subprocess, time
 from os.path import join
 from jinja2 import Template
@@ -24,14 +24,14 @@ def after_makebatch(self, args):
     subExpList               = self._getSubExperiments(expDir)
     # write launch.sh file
     launchFile = \
-"""proj=resnet{}
+"""proj={}_{}
 for subexp in {}; do
-    cmd=". ~/.bashrc; sysinfo; cd code; luajit go.lua -conf ../${{subexp}}/conf.lua -resume -nGPU 4"
+    cmd=". ~/.bashrc; sysinfo; cd code; luajit go.lua -conf ../${{subexp}}/{} -nGPU 4"
     echo $cmd
     jbsub -cores 2+4 -mem 40g -queue p8 -out ${{subexp}}/run.stdout -proj ${{proj}} -name ${{proj}}_${{subexp}} ${{cmd}}
 done
     """
-    launchFile = launchFile.format(expId, ' '.join(subExpList))
+    launchFile = launchFile.format(cfg.name, expId, ' '.join(subExpList), cfg.confTemplFile)
     fn = join(expDir, 'launch.sh')
     with open(fn,'w') as fh:
         fh.write(launchFile)
@@ -55,16 +55,20 @@ def score(self, args):
     gammaN  = args.get('gammaN',   1)
     acwtfrom= args.get('acwtfrom', 1)
     acwtto  = args.get('acwtto',   3)
-    # clone attscore
+    subExps = args.get('subExps',  'all')
+    # clone attscore, and pull
     if not os.path.exists(join(expDir, 'attscore')):
-        subprocess.call('cd {}; git clone {} attscore'.format(
+        subprocess.call('cd {}; git clone {} attscore; cd attscore; ln -s ../code baseclone'.format(
             expDir, 'git@github.rtp.raleigh.ibm.com:tsercu-us/attscore.git'), shell=True)
+    subprocess.call('cd attscore; git pull', shell=True)
     # write the spj files from template
     templatefn = join(expDir, 'attscore/test.spj.template')
     template   = Template(open(templatefn).read() + '\n')
-    templargs = {'langid':langid, 'mdl':'epoch%d'%epochnr, 'testset':testset, 'gammas':gammas, 'gammaN':gammaN, 'acwtfrom':acwtfrom, 'acwtto': acwtto}
+    templargs = {'langid':langid, 'mdl':'epoch%d'%epochnr, 'testset':testset, 'gammas':gammas, 'gammaN':gammaN, 'acwtfrom':acwtfrom, 'acwtto': acwtto, 'conffile':cfg.confTemplFile}
     spjscript = template.render(**templargs)
     # for each subexp, write out test-spj script and run it
+    if subExps != 'all':
+        subExpList = subExps.split(",") # comma separated list, or all subexps if empty
     for sj, subexpid in enumerate(subExpList):
         mdl_chkp = join(expDir, subexpid, 'epoch{}_{}.mdl.mat'.format(epochnr, langid))
         if not os.path.exists(mdl_chkp):

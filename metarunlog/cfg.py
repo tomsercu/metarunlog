@@ -17,10 +17,10 @@ analysis_overview = { # {funcname: ('extra_arg1', extrarg2, ), .. }
 analysis_subexp = {
     'plotSinglePerf': (),
 }
-analysis_webdir = '/u/tomsercu/www'
+analysis_webdir = '/u/tsercu/www'
 hooks = {
     'after_new' : {},
     'after_makebatch' : {},
     'run'       : {},
-    'score'     : {'epoch':None, 'langid':'swb', 'testset':'hub5'}
+    'score'     : {'epoch':None, 'langid':'swb', 'testset':'hub5','gammaN': 1, 'gammas': '{"0.8"}', 'acwtfrom': 1, 'acwtto': 3, 'subExps':'all'}
 }
