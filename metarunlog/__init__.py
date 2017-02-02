@@ -197,7 +197,7 @@ class MetaRunLog:
         title = '{} {} - {}'.format(cfg.name, cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
         outhtml.addTitle(self._expIsDoneIndicator(expDir) + title)
-        outhtml.parseNote(join(expDir,'.mrl.note'))
+        outhtml.parseNote(join(expDir, cfg.note_fn))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
         if subExpIds:
             # analysis_overview functions
@@ -370,7 +370,7 @@ class MetaRunLog:
         return expConfig
 
     def _putEmptyNote(self, expDir, description):
-        with open(join(expDir, '.mrl.note'),'w') as fh:
+        with open(join(expDir, cfg.note_fn),'w') as fh:
             if description:
                 fh.write('### ' + description + '\n')
             fh.write('#### Goal\n\n#### Observations\n\n#### Conclusions\n')
@@ -380,15 +380,6 @@ class MetaRunLog:
 
     def _expIsDoneIndicator(self, expDir):
         return '   ' if  self._expIsDone(expDir) else '** '
-
-# Extend MetaRunLog with mrl_hooks
-try:
-    import mrl_hooks # from basedir, user-supplied
-    for hook in cfg.hooks:
-        setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
-except ImportError:
-    print('Warning: no valid mlr_hooks.py file - will ignore cfg.hooks')
-    mrl_hooks = None
 
 def main():
     try:
@@ -417,7 +408,16 @@ def main():
             return
         elif args.mode == 'raise':
             raise
-    # Resume normal operation.
+    # No Exception: Resume normal operation.
+    # Extend MetaRunLog with mrl_hooks
+    try:
+        import mrl_hooks # from basedir, user-supplied
+        for hook in cfg.hooks:
+            setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
+    except ImportError:
+        print('Warning: no valid mlr_hooks.py file - will ignore cfg.hooks')
+        mrl_hooks = None
+    # CL menu
     parser = argparse.ArgumentParser(description='Metarunlog.')
     subparsers = parser.add_subparsers(title='subcommands', description='valid subcommands')
     # new

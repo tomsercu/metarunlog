@@ -24,3 +24,4 @@ hooks = {
     'run'       : {},
     'score'     : {'epoch':None, 'langid':'swb', 'testset':'hub5','gammaN': 1, 'gammas': '{"0.8"}', 'acwtfrom': 1, 'acwtto': 3, 'subExps':'all'}
 }
+note_fn = '.mrl.note'

@@ -4,6 +4,7 @@
 from jinja2 import Template
 from collections import OrderedDict
 import itertools
+import cfg
 
 class ConfParser:
     """
@@ -40,6 +41,7 @@ class ConfParser:
         self.params = [dict(d1.items() + d2.items()) for d1,d2 in itertools.product(params, self.params)]
         self.output = []
         for i, param in enumerate(self.params):
+            param['subExpId'] = cfg.subExpFormat.format(subExpId=i+1)
             self.output.append((i+1, param, self.renderFromParams(param)))
 
     def renderFromParams(self, params):
