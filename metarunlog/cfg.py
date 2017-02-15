@@ -17,6 +17,8 @@ analysis_overview = { # {funcname: ('extra_arg1', extrarg2, ), .. }
 analysis_subexp = {
     'plotSinglePerf': (),
 }
+analysis_outdir = 'analysis' # relative to expDir
+analysis_outfn  = 'index.html' # inside analysis_outdir
 analysis_webdir = '/u/tsercu/www'
 hooks = {
     'after_new' : {},

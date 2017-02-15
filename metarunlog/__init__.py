@@ -183,7 +183,7 @@ class MetaRunLog:
             print("Could not load local mrl_analyze module: {}".format(str(e)))
         expId, expDir, expConfig = self._loadExp(args.expId)
         print "Analyze expId {} in path {}".format(expId, expDir)
-        outdir = args.outdir if args.outdir else join(expDir, 'analysis')
+        outdir = args.outdir if args.outdir else join(expDir, cfg.analysis_outdir)
         if not os.path.exists(outdir): os.mkdir(outdir)
         # load the params into dataframe
         subExpIds = self._getSubExperiments(expDir)
@@ -219,7 +219,7 @@ class MetaRunLog:
                 outhtml.addHeader('{}'.format(funcname), 1)
                 retval = getattr(mrl_analyze, funcname)(expDir, outdir, None, 'def', *xtrargs)
                 outhtml.addRetVal(retval)
-        outhtml.render(join(outdir, 'index.html'))
+        outhtml.render(join(outdir, cfg.analysis_outfn))
         if cfg.analysis_webdir:
             webdir = join(cfg.analysis_webdir, self._fmtSingleExp(expId))
             #if not os.path.exists(webdir):
