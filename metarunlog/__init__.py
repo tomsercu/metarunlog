@@ -202,14 +202,14 @@ class MetaRunLog:
         if subExpIds:
             # analysis_overview functions
             for funcname, xtrargs in sorted(cfg.analysis_overview.items()):
-                outhtml.addHeader('{} - {}'.format('overview', funcname), 1)
+                outhtml.addHeader('{} - {}'.format('overview', funcname), 1, funcname)
                 retval = getattr(mrl_analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
                 outhtml.addRetVal(retval)
         # per exp functions
         if subExpIds:
             for subExpId in subExpIds:
                 subExpDir = join(expDir, subExpId)
-                outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1)
+                outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1, subExpId)
                 for funcname, xtrargs in cfg.analysis_subexp.items():
                     outhtml.addHeader('{}'.format(funcname), 2)
                     retval = getattr(mrl_analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)

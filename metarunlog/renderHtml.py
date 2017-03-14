@@ -17,7 +17,9 @@ class HtmlFile:
     def addTitle(self, title):
         self.title = title
         self.body += "<h1>{}</h1>\n".format(title)
-    def addHeader(self, hdr, level=1):
+    def addHeader(self, hdr, level=1, anchor=None):
+        if anchor:
+            hdr = '<a name="{}">{}</a>'.format(anchor, hdr)
         self.body += "<h{level}>{hdr}</h{level}>\n".format(level=level, hdr=hdr)
     def addParagraph(self, txt):
         self.body += "<p>{}</p>\n".format(txt)
