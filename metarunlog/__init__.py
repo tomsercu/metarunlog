@@ -175,6 +175,12 @@ class MetaRunLog:
 
     def analyze(self, args):
         ## Load modules only needed for analyzing and rendering the html file
+        # TODO redesign:
+        # + per-subExp individual functions: dont support the non-expanded usecase
+        # + outhtml: generate completely in markdown? Use some existing htmlBuilder pkg?
+        # + save as svg rather than png?
+        # + NOTE if bokeh direct render into html file is too slow (for many datapoints),
+        #   use autoload_static into pfn in mrl_analyze. Could be simply done with addHtml(div)
         import pandas as pd
         import renderHtml
         try:

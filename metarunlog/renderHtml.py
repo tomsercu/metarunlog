@@ -8,12 +8,21 @@ import subprocess
 from os.path import join
 import numpy as np
 import markdown
+import bokeh
+from bokeh.embed import components
+
+bokehCdn = """<script src="http://cdn.pydata.org/bokeh/release/bokeh-{0}.min.js"></script>
+<script src="http://cdn.pydata.org/bokeh/release/bokeh-widgets-{0}.min.js"></script>
+<link href="http://cdn.pydata.org/bokeh/release/bokeh-{0}.min.css" rel="stylesheet" type="text/css">
+<link href="http://cdn.pydata.org/bokeh/release/bokeh-widgets-{0}.min.css" rel="stylesheet" type="text/css">"""\
+        .format(bokeh.__version__)
 
 class HtmlFile:
     # TODO use jinja templating here
     def __init__(self):
         self.body = ""
         self.title = ""
+        self.bokehScripts = ""
     def addTitle(self, title):
         self.title = title
         self.body += "<h1>{}</h1>\n".format(title)
@@ -33,7 +42,9 @@ class HtmlFile:
 
     def render(self, fn, v=True):
         with open(fn, 'w') as fh:
-            fh.write('<!DOCTYPE html>\n <html>\n <head>\n <title>{}</title>\n </head>\n\n'.format(self.title))
+            head = '<title>{}</title>\n{}\n{}\n'.format(
+                    self.title, bokehCdn if self.bokehScripts else '', self.bokehScripts)
+            fh.write('<!DOCTYPE html>\n <html>\n<head>\n{}\n</head>\n\n'.format(head))
             fh.write('<body>{}</body>\n\n'.format(self.body))
             fh.write('</html>\n')
         if v: print "Wrote output to {}".format(fn)
@@ -52,6 +63,8 @@ class HtmlFile:
                 self.addText(rdata)
             elif rtype == 'mp4':
                 self.addMp4(rdata)
+            elif rtype == 'bokeh':
+                self.addBokeh(rdata)
             else:
                 raise Exception("Unknown rtype {}".format(rtype))
 
@@ -65,3 +78,7 @@ class HtmlFile:
         self.body += '<div>\n<video preload="none" controls>\n'
         self.body += '<source src="{}" type="video/mp4; codecs="avc1.42E01E, mp4a.40.2"">'.format(videofn)
         self.body += '</video>\n</div>\n'
+    def addBokeh(self, bokehPlot):
+        script, div = components(bokehPlot)
+        self.bokehScripts += script + '\n'
+        self.body += div + '\n'
