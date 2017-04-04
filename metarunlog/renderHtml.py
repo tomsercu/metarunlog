@@ -55,16 +55,9 @@ class HtmlFile:
         for (rdata, rtype, rheader) in retval:
             if rheader: 
                 self.addHeader(rheader,3) # TODO nested header and menu?
-            if rtype == 'table': 
-                self.addTable(rdata)
-            elif rtype == 'plot': 
-                self.addPlot(rdata)
-            elif rtype == 'text':
-                self.addText(rdata)
-            elif rtype == 'mp4':
-                self.addMp4(rdata)
-            elif rtype == 'bokeh':
-                self.addBokeh(rdata)
+            if rtype in ['table', 'plot', 'text', 'mp4', 'bokeh', 'plotlinkbokeh']:
+                addFunc = getattr(self, 'add' + rtype.capitalize())
+                addFunc(rdata)
             else:
                 raise Exception("Unknown rtype {}".format(rtype))
 
@@ -82,3 +75,7 @@ class HtmlFile:
         script, div = components(bokehPlot)
         self.bokehScripts += script + '\n'
         self.body += div + '\n'
+    def addPlotlinkbokeh(self, rdata):
+        plotfn, bokehfn = rdata
+        self.addParagraph('<a href="{}"><img src="{}"></img></a>\n'.format(
+            bokehfn, plotfn))
