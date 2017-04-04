@@ -175,12 +175,6 @@ class MetaRunLog:
 
     def analyze(self, args):
         ## Load modules only needed for analyzing and rendering the html file
-        # TODO redesign:
-        # + per-subExp individual functions: dont support the non-expanded usecase
-        # + outhtml: generate completely in markdown? Use some existing htmlBuilder pkg?
-        # + save as svg rather than png?
-        # + NOTE if bokeh direct render into html file is too slow (for many datapoints),
-        #   use autoload_static into pfn in mrl_analyze. Could be simply done with addHtml(div)
         import pandas as pd
         import renderHtml
         try:
@@ -193,46 +187,34 @@ class MetaRunLog:
         if not os.path.exists(outdir): os.mkdir(outdir)
         # load the params into dataframe
         subExpIds = self._getSubExperiments(expDir)
-        if subExpIds:
-            try:
-                paramList = [self._loadSubExp(join(expDir,subExpId))['params'] for subExpId in subExpIds]
-            except (IOError, KeyError) as e: # dummy
-                paramList = [{'subExpId': subExpId} for subExpId in subExpIds]
-            Dparams = pd.DataFrame(paramList, index=subExpIds)
+        if not subExpIds:
+            raise InvalidExpIdException("Exp {} not expanded into subExps".format(expId))
+        paramList = [self._loadSubExp(join(expDir,subExpId))['params'] for subExpId in subExpIds]
+        Dparams = pd.DataFrame(paramList, index=subExpIds)
         outhtml = renderHtml.HtmlFile()
         title = '{} {} - {}'.format(cfg.name, cfg.singleExpFormat.format(expId=expId), expConfig['timestamp'].split('T')[0])
         if 'description' in expConfig and expConfig['description']: title += ' - ' + expConfig['description']
         outhtml.addTitle(self._expIsDoneIndicator(expDir) + title)
         outhtml.parseNote(join(expDir, cfg.note_fn))
         # TODO keep analysis functions in order by using ordereddict in .mrl.cfg and cfg.py
-        if subExpIds:
-            # analysis_overview functions
-            for funcname, xtrargs in sorted(cfg.analysis_overview.items()):
-                outhtml.addHeader('{} - {}'.format('overview', funcname), 1, funcname)
-                retval = getattr(mrl_analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
-                outhtml.addRetVal(retval)
-        # per exp functions
-        if subExpIds:
-            for subExpId in subExpIds:
-                subExpDir = join(expDir, subExpId)
-                outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1, subExpId)
-                for funcname, xtrargs in cfg.analysis_subexp.items():
-                    outhtml.addHeader('{}'.format(funcname), 2)
-                    retval = getattr(mrl_analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
-                    outhtml.addRetVal(retval)
-        else:
+        #### (1) analysis_overview functions
+        for funcname, xtrargs in sorted(cfg.analysis_overview.items()):
+            outhtml.addHeader('{} - {}'.format('overview', funcname), 1, funcname)
+            retval = getattr(mrl_analyze, funcname)(expDir, outdir, subExpIds, Dparams, *xtrargs)
+            outhtml.addRetVal(retval)
+        #### (2) per exp functions
+        for subExpId in subExpIds:
+            subExpDir = join(expDir, subExpId)
+            outhtml.addHeader('{} - {}'.format('subExp', subExpId), 1, subExpId)
             for funcname, xtrargs in cfg.analysis_subexp.items():
-                outhtml.addHeader('{}'.format(funcname), 1)
-                retval = getattr(mrl_analyze, funcname)(expDir, outdir, None, 'def', *xtrargs)
+                outhtml.addHeader('{}'.format(funcname), 2)
+                retval = getattr(mrl_analyze, funcname)(subExpDir, outdir, Dparams, subExpId, *xtrargs)
                 outhtml.addRetVal(retval)
+        #### (3) render and optionally copy over to webdir
         outhtml.render(join(outdir, cfg.analysis_outfn))
         if cfg.analysis_webdir:
             webdir = join(cfg.analysis_webdir, self._fmtSingleExp(expId))
-            #if not os.path.exists(webdir):
-                #os.mkdir(webdir)
             subprocess.call("rsync -az {}/* {}/".format(outdir, webdir), shell=True)
-            #subprocess.call("chmod -R a+r {}".format(webdir), shell=True)
-            #subprocess.call(r"find %s -type d -exec chmod a+x {} \;"%(webdir), shell=True)
             print "Copied to webdir {}".format(webdir)
 
     def execWithHooks(self, mode, args):
@@ -246,8 +228,11 @@ class MetaRunLog:
         return ret
 
     def _loadSubExp(self, subExpDir):
-        with open(join(subExpDir, '.mrl')) as fh:
-            return json.load(fh, object_hook=_decode_dict)
+        try:
+            with open(join(subExpDir, '.mrl')) as fh:
+                return json.load(fh, object_hook=_decode_dict)
+        except (IOError, KeyError) as e: # dummy
+            return {'subExpDir': subExpDir}
 
     def _getSubExperiments(self, expDir):
         """ returns a list of the existing subexperiments as formatted strings """
