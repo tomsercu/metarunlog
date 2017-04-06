@@ -1,39 +1,71 @@
-# Metarunlog
+# Metarunlog (mrl)
+This is a minimalistic experiment management tool, written in python.
+
+## Goal and philosophy
++ Goal: manage your machine learning project experiments
++ Command line commands to create new experiment, expand a template to fill in changing hyperparameters, launch the experiment, parse the resulting output logs / csv and generate a webpage
++ Extend with python code specific to your project: parse log files, plot graphs with matplotlib or bokeh
++ Design principles:
+    - Minimalistic, use sensible primitives
+    - Experiments are based on folder structure
+    - Work off git versioned codebase
+    - Do not get in the way
+    - Independent of any project and DL tool
++ What it does not do
+    - Deal with schedulers
+    - Keep a database across all experiments with best results
+    - Automated hyperparam search
+    - Leaderboard
+
+## Hierarchy
++ Project: the project basedir is the root of the git repo containing this project's evolving codebase. It has a `.mrl.cfg` config file for this project subdirectory `outdir` for example `output` or `exps` where all the experiments live, which is not checked in to git.
++ Experiment: a directory under `outdir`, has the codebase checked out at specific commit, along with a template of the `config` or `run.sh` file, which defines most hyperparameters, some of them as `{{template_variables}}`. This is then expanded in:
++ subExperiment: a directory under `expDir`, has the config file of the experiment with all hyperparams filled out, using the codebase of parent experiment. All logfiles, stdout, images, checkpoints etc go here.
+
 ## Installation
--
+Preferably in virtualenv or conda environment. Or use `python setup.py install --user`.
+
 ```
 git clone https://github.com/tomsercu/metarunlog
 cd metarunlog
-python setup.py install --user
+python setup.py install
 
 ```
 
-## Get started 
-+ basedir should typically be your git code directory. 
-+ On mrl init, a .mrl.cfg file is created where the default config is copied into. Manually edit it. It will keep the id of the current experiment.
+## New project
+For a new project execute `mrl init outdir` from your project basedir.
+This creates a `.mrl.cfg` json file, containing default config values. 
+Manually edit it; specifically the `name`, `copyFiles` and `confTemplFile` fields.
 
-## Batch syntax
-Metarunlog supports generating multiple config files automatically from a special config template, following jinja-syntax.
-This is meant for automatic grid search.
-The template provides a syntax to easily set hyperparameter values to do a grid search over.
+## New experiment, config file template system
+NOTE: `mrl -h` or `mrl subcommand -h` alwyas gives you info.
+
+Metarunlog is designed around config file templates, which contain hyperparams of which some are template variables.
+Config files could be either eg `cfg.py` which is then `import`ed by the codebase, or eg `run.sh` which contains the hyperparms as CL args.
+The template provides a syntax to easily do a grid search over hyperparameters.
 
 Example code
 ```
-mrl new -cp [other_batch] "description"
-> ./output/000001
+mrl new -cp [prev_expId] "My experiment description"
+> ./outdir/expId
 ```
-This generates a new directory and copies previous config files (specified in cfg.py or .mrl.cfg) over.
 
-Now edit the config batch file, for example like this file conf.lua:
+This generates a new directory in `outdir`, checks out your root dir at current commit, 
+and copies over the config files from `prev_expId` as specified in `.mrl.cfg` field `copyFiles`.
+
+Now edit the `confTemplFile`, for example like this file conf.lua:
 ```
-learning_rate = {% lr %}
-wdecay = {% wdecay %}
-other_value = 3
+local cfg = {
+    learning_rate = {{lr}},
+    wdecay    = {{wdecay}},
+    momentum  = 3, -- doesn't change
+    numLayers = 5
+}
 -- MRL:grid['lr'] = [0.01, 0.04, 0.1]
 -- MRL:grid['wdecay'] = [0.1, 1.0, 10.0]
 ```
 
-The template file should have the MRL (python) instructions in the last lines, 
+The template file should have the `mrl` instructions in the last lines, 
 starting with whatever comment-symbol your language uses, followed by a space and then either
 
 + MRL:grid['param'] = [values] 
@@ -41,41 +73,20 @@ starting with whatever comment-symbol your language uses, followed by a space an
 
 After the template is set, use:
 ```
-mrl batch [id]
-```
-This expands the template under id (default = last id) into subdirs, each containing one rendered config file.
-
-## HPC support
-The HPC support is fairly much tailored for my personal setup here at NYU but will probably be more broadly usable at any place that uses a cluster with qsub submission system.
-It assumes some things like having a hpc connection set up in your .ssh/config so you can ssh/scp with just the hostname ('mercer' in cfg.py).
-It also assumes qsub is available, some of the PBS flags might not make sense in another environment, but you can change the template in cfg.py and in your .mrl.cfg file.
-
-## Custom jobs and scheduling
-Metarunlog supports defining custom jobs. You typically want to use this for running the actual simulation, scoring, etc.
-
-First of all, there are three concepts:
-+ jobs (defined in cfg): dictionary of job names. Each job consists of a list of commands. For example, {"go": [checkout code at right commitId, execute experiment, score experiment], ...}
-+ resources (defined in cfg): {'clustername': {'scheduler':'', 'host': [list of (host, device) tuples], 'copyFiles': True}, ... }
-+ schedulers (localScheduler, sshScheduler, pbsScheduler): classes that reads in your computing resources, your job, and expId. It then manages the execution.
-
-Jobs appear directly as commands in mrl -h. Running a job like this is the same as mrl scheduleLocal jobname.
-
-Jobs are parametrized in config with
-``` python
-custom = {"commandName": [list of consecutive commands to be executed], ...}
+mrl makebatch [expId]
 ```
 
-The commands are chained with && so as soon as one fails everything will fail and return failcode to 
-the python subprocess returncode.
-If you want a command to be failable, write it as (cmd || true) so it doesnt interrupted the chain.
+This expands the conf template from experiment expId (default = last id) into subExperiments,
+each containing one rendered config file.
 
-## Analysis
-(mrl analyze expId [anadir]) does the following on a finished batch experiment:
-+ make anadir under expDir
+## mrl analyze
+Syntax:
+`mrl analyze expId` 
+
 + generate html file with these sections: 
-    * notes, parsed from .mrl.note in markdown format (start titles from level 3 onwards)
+    * notes, parsed from `note_fn` in markdown format (start titles from level 3 onwards)
     * overview
-    * a section per subexp
+    * a section per subExp
 + Generate the overview section as follows:
     * Use cfg.analysis\_overview = {'funcname': (xarg1, xarg2, etc), ... }
     * returnval is of the format: [(data, rtype, rheader or None), (...) ... ]
@@ -86,24 +97,14 @@ If you want a command to be failable, write it as (cmd || true) so it doesnt int
     * The functions are called as: getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, \*xtrargs)
 + Make ipython / itorch notebook from template
 
-## Todo
-+ Parse notes in analysis
+## Hooks
+You can define custom functionsin `mrl_hooks.py` and register them in `.mrl.cfg` field `hooks`.
+`after_` and `before_` are magic prefixes which execute the hook before or after an existing function 
+(for example, `after_new` or `after_makebatch`).
+
+A hook should follow the syntax `def after_makebatch(self, args):` with `args` containing `expId`
+and the other info contained in the `expId/.mrl` file.
 
 ## Dependencies
-+ sshpass: http://sourceforge.net/projects/sshpass/
 + jinja2: http://jinja.pocoo.org/
-+ markdown for using analyze mode
-
-# TODO 2016-10-07 
-+ add hooks, in mrl_hooks.py
-  @ register_before("new")
-  @ register_after(..)
-  @ register_cmd()
-  then parser should have different target, being hookAndFunc(name)
-+ think about workflow like:
-    attscore (decode)
-    genLats
-    add spj script like launchMany does, after expandBatch
-+ rewrite analyze is piece of crap
-+ rewrite this readme
-
++ for `mrl analyze`: markdown, bokeh, pandas
