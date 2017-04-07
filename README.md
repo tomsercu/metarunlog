@@ -1,20 +1,29 @@
 # Metarunlog (mrl)
-This is a minimalistic experiment management tool, written in python.
+This is a minimalistic experiment management tool, written in python, aimed at machine learning.
+In a nutshell, the workflow goes like this:
+
++ `mrl new "Short description of experiment goal"` makes a new directory `expId` (eg: 0024),
+     cloning your codebase and writing a config file template with hyperparmeters.
++ `mrl makebatch expId` expands this config template into concrete "sub-experiments", making it ready to run.
++ You launch the experiment.
++ `mrl analyze expId` parses the output log files and generates an overview webpage for this experiment.
 
 ## Goal and philosophy
-+ Goal: manage your machine learning project experiments
-+ Command line commands to create new experiment, expand a template to fill in changing hyperparameters, launch the experiment, parse the resulting output logs / csv and generate a webpage
-+ Extend with python code specific to your project: parse output and log files, plot output metrics with matplotlib or bokeh
 + Design principles:
     - Minimalistic, use sensible primitives, do not get in the way
-    - Experiments are based on folder structure
+    - Experiments are based on filesystem folder structure
     - Work off git versioned codebase
-    - Independent of any project and DL tool
+    - Independent of codebase and DL tool: extend with project-specific hooks to parse and plot
+    - Doesn't force you to use specific style of config files
+    - No barriers to do simple one-off modifications to try new idea
 + What it does not do
     - Deal with schedulers
-    - Keep a database across all experiments with best results
+    - Keep a database across all experiments with best results, leaderboard
     - Automated hyperparam search
-    - Leaderboard
++ Possible future features (as of 2017-04-07)
+    - Summarization over full project, including goal, results, and conclusion of each experiment
+    - In case of a clear metric we're optimizing (not the case for GANs, speech XE), keep best across experiments / subexperiments.
+    - Keeping track of experiment "parent(s)"
 
 ## Hierarchy
 + Project: the project basedir is the root of the git repo containing this project's evolving codebase. It has a `.mrl.cfg` config file for this project subdirectory `outdir` for example `output` or `exps` where all the experiments live, which is not checked in to git.
@@ -82,6 +91,11 @@ each containing one rendered config file.
 Syntax:
 `mrl analyze expId` 
 
+This generates an html page with plots (matplotlib or bokeh).
+This can be rsync-ed over to a specific local or remote directory where a webserver is serving from.
+Alternatively you can keep the html file local and serve the whole experiment directory for example with
+`python -m SimpleHTTPServer 8800`.
+
 + generate html file with these sections: 
     * notes, parsed from `note_fn` in markdown format (start titles from level 3 onwards)
     * overview
@@ -94,7 +108,6 @@ Syntax:
 + Generate per-subexp sections:
     * Use cfg.analysis\_subexp (the same way as above and same returnval format)
     * The functions are called as: getattr(analyze, funcname)(expDir, outdir, subExpIds, Dparams, \*xtrargs)
-+ Make ipython / itorch notebook from template
 
 ## Hooks
 You can define custom functions in `mrl_hooks.py` and register them in the `.mrl.cfg` field `hooks`.
