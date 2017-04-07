@@ -4,12 +4,11 @@ This is a minimalistic experiment management tool, written in python.
 ## Goal and philosophy
 + Goal: manage your machine learning project experiments
 + Command line commands to create new experiment, expand a template to fill in changing hyperparameters, launch the experiment, parse the resulting output logs / csv and generate a webpage
-+ Extend with python code specific to your project: parse log files, plot graphs with matplotlib or bokeh
++ Extend with python code specific to your project: parse output and log files, plot output metrics with matplotlib or bokeh
 + Design principles:
-    - Minimalistic, use sensible primitives
+    - Minimalistic, use sensible primitives, do not get in the way
     - Experiments are based on folder structure
     - Work off git versioned codebase
-    - Do not get in the way
     - Independent of any project and DL tool
 + What it does not do
     - Deal with schedulers
@@ -32,15 +31,15 @@ python setup.py install
 
 ```
 
+NOTE: `mrl -h` or `mrl subcommand -h` gives more info on available subcommands and their flags.
+
 ## New project
 For a new project execute `mrl init outdir` from your project basedir.
 This creates a `.mrl.cfg` json file, containing default config values. 
 Manually edit it; specifically the `name`, `copyFiles` and `confTemplFile` fields.
 
-## New experiment, config file template system
-NOTE: `mrl -h` or `mrl subcommand -h` alwyas gives you info.
-
-Metarunlog is designed around config file templates, which contain hyperparams of which some are template variables.
+## New experiments and the config file template system
+Metarunlog is designed around config file templates, which contain hyperparams, some of which are template variables.
 Config files could be either eg `cfg.py` which is then `import`ed by the codebase, or eg `run.sh` which contains the hyperparms as CL args.
 The template provides a syntax to easily do a grid search over hyperparameters.
 
@@ -79,7 +78,7 @@ mrl makebatch [expId]
 This expands the conf template from experiment expId (default = last id) into subExperiments,
 each containing one rendered config file.
 
-## mrl analyze
+## Process and visualize the output: mrl analyze
 Syntax:
 `mrl analyze expId` 
 
@@ -98,8 +97,8 @@ Syntax:
 + Make ipython / itorch notebook from template
 
 ## Hooks
-You can define custom functionsin `mrl_hooks.py` and register them in `.mrl.cfg` field `hooks`.
-`after_` and `before_` are magic prefixes which execute the hook before or after an existing function 
+You can define custom functions in `mrl_hooks.py` and register them in the `.mrl.cfg` field `hooks`.
+Prefixes `after_` and `before_` are magic prefixes which execute the hook before or after an existing function
 (for example, `after_new` or `after_makebatch`).
 
 A hook should follow the syntax `def after_makebatch(self, args):` with `args` containing `expId`
