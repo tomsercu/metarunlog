@@ -406,7 +406,8 @@ def main():
         for hook in cfg.hooks:
             setattr(MetaRunLog, hook, getattr(mrl_hooks, hook))
     except ImportError:
-        print('Warning: no valid mlr_hooks.py file - will ignore cfg.hooks')
+        if cfg.hooks:
+            print('Warning: no valid mlr_hooks.py file - will ignore cfg.hooks')
         mrl_hooks = None
     # CL menu
     parser = argparse.ArgumentParser(description='Metarunlog.')
