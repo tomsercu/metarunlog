@@ -233,6 +233,8 @@ class MetaRunLog:
                 return json.load(fh, object_hook=_decode_dict)
         except (IOError, KeyError) as e: # dummy
             return {'subExpDir': subExpDir}
+        except ValueError as e:
+            raise type(e)('Failed to load .mrl file for subExp {} \n{}'.format(subExpDir, e.message))
 
     def _getSubExperiments(self, expDir):
         """ returns a list of the existing subexperiments as formatted strings """
