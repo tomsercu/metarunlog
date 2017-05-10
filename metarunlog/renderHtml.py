@@ -55,12 +55,14 @@ class HtmlFile:
         for (rdata, rtype, rheader) in retval:
             if rheader: 
                 self.addHeader(rheader,3) # TODO nested header and menu?
-            if rtype in ['table', 'plot', 'text', 'mp4', 'bokeh', 'plotlinkbokeh']:
+            if rtype in ['table', 'plot', 'text', 'mp4', 'bokeh', 'plotlinkbokeh', 'html']:
                 addFunc = getattr(self, 'add' + rtype.capitalize())
                 addFunc(rdata)
             else:
                 raise Exception("Unknown rtype {}".format(rtype))
 
+    def addHtml(self, htmlString):
+        self.body += htmlString
     def addPlot(self, plotfn):
         self.addParagraph('<img src="{}"></img>\n'.format(plotfn))
     def addTable(self, table): 
