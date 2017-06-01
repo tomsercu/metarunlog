@@ -232,7 +232,7 @@ class MetaRunLog:
             with open(join(subExpDir, '.mrl')) as fh:
                 return json.load(fh, object_hook=_decode_dict)
         except (IOError, KeyError) as e: # dummy
-            return {'subExpDir': subExpDir}
+            return {'subExpDir': subExpDir, 'params':{}}
         except ValueError as e:
             raise type(e)('Failed to load .mrl file for subExp {} \n{}'.format(subExpDir, e.message))
 
